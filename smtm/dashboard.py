@@ -563,7 +563,7 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
 .tab.active { background: #3b82f6; color: white; border-color: #3b82f6; }
 .form-row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 .form-row input, .form-row select { background: #334155; border: 1px solid #475569; color: #e2e8f0; border-radius: 6px; padding: 6px 10px; font-size: 13px; }
-.hidden { display: none; }
+.hidden { display: none !important; }
 .toast { position: fixed; bottom: 20px; right: 20px; background: #16a34a; color: white; padding: 12px 20px; border-radius: 8px; font-size: 14px; z-index: 9999; animation: fadeIn 0.3s; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 768px) {
