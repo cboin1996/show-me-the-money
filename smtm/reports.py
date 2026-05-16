@@ -12,7 +12,8 @@ def monthly_summary(txns: list[Transaction]) -> pd.DataFrame:
     if not expenses:
         return pd.DataFrame()
 
-    rows = [{"month": t.month, "category": t.category, "amount": t.amount}
+    rows = [{"month": t.month, "category": t.category or "Uncategorized",
+             "amount": t.amount}
             for t in expenses]
     df = pd.DataFrame(rows)
     pivot = df.pivot_table(

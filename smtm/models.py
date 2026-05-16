@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
+from uuid import uuid4
 
 
 class TxnType(Enum):
@@ -16,9 +17,16 @@ class Transaction:
     store_raw: str
     store_normalized: str = ""
     category: str = ""
+    confidence: str = ""
     txn_type: TxnType = TxnType.EXPENSE
     source_file: str = ""
     sub_description: str = ""
+    uuid: str = ""
+    is_deleted: bool = False
+
+    def __post_init__(self):
+        if not self.uuid:
+            self.uuid = str(uuid4())
 
     @property
     def month(self) -> str:
