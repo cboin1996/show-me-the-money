@@ -31,7 +31,15 @@ smtm serve                     # http://127.0.0.1:8000
 smtm serve --port 9000         # custom port
 ```
 
-Opens a browser with the full dashboard: import CSVs via drag-and-drop, categorize merchants inline, view anomalies, manage budgets/rules/store pairs, and soft-delete/restore transactions.
+Opens a browser with the full dashboard. Tabs:
+
+- **Overview** — monthly expense stacked bar, category donut, trend lines, income vs expenses, summary cards. Anomalies panel flags transactions exceeding 2x their category average (e.g. "$3,511 at Canadian Tire — 27.9x your usual Shopping spend").
+- **Import** — drag-and-drop CSV files onto the upload zone. Preview shows parsed count, date range, and classification breakdown before confirming. Import history table below.
+- **Categorize** — uncategorized merchants grouped by store name with transaction count and total spend. Pick a category from the dropdown to classify all matching transactions at once. Keyword suggestions section offers bulk auto-categorization based on store name patterns.
+- **Budgets** — budget vs actual grouped bar chart per category. Set/edit monthly budgets inline. Copy budgets between months.
+- **Manage** — category rules table (add/view pattern→category mappings), store pairs table (raw→normalized name mappings), recycle bin (restore soft-deleted transactions).
+
+All mutations (import, categorize, delete, budget set) happen via the REST API and refresh the UI live.
 
 ### CLI
 
