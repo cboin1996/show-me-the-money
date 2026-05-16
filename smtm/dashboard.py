@@ -736,7 +736,7 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
     <div><label>To</label><br><input type="date" id="dateTo" style="width:130px"></div>
     <div><label>Min $</label><br><input type="number" id="minAmount" style="width:80px" step="0.01"></div>
     <div><label>Max $</label><br><input type="number" id="maxAmount" style="width:80px" step="0.01"></div>
-    <div style="margin-left:auto;align-self:flex-end"><button class="btn btn-outline" id="exportCsvBtn" data-testid="export-csv-btn">Export CSV</button></div>
+    <div style="margin-left:auto;align-self:flex-end;display:flex;gap:8px"><button class="btn btn-outline" id="exportCsvBtn" data-testid="export-csv-btn">Export CSV</button><a href="/api/report/pdf" class="btn btn-outline" data-testid="export-pdf-btn" download="financial_report.pdf">Download PDF</a></div>
 </div>
 <div id="bulkBar" class="bulk-bar hidden" data-testid="bulk-bar">
     <span><span class="count" id="bulkCount">0</span> selected</span>

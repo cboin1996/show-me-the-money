@@ -202,7 +202,19 @@ def cmd_suggest(args):
 def cmd_report(args):
     db = get_db(args)
 
-    if args.html:
+    if args.pdf:
+        from .pdf_report import generate_pdf
+        from .server import compute_analytics
+
+        txns = db.get_all_transactions()
+        stats = db.get_stats()
+        budgets = db.get_budgets()
+        analytics = compute_analytics(txns, budgets)
+        output = Path(args.output or f"{DEFAULT_OUTPUT_DIR}/report.pdf")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        generate_pdf(txns, stats, budgets, analytics, output)
+        print(f"PDF report generated: {output}")
+    elif args.html:
         from .dashboard import generate_dashboard
 
         txns = db.get_all_transactions()
@@ -348,6 +360,7 @@ def main():
     # report
     rep = sub.add_parser("report", help="Generate reports")
     rep.add_argument("--html", action="store_true", help="Generate HTML dashboard")
+    rep.add_argument("--pdf", action="store_true", help="Generate PDF report")
     rep.add_argument("--output", "-o", help="Output path")
 
     # budget

@@ -1074,6 +1074,15 @@ class TestServer:
         assert a["velocity"]["days_in_month"] > 0
         assert isinstance(a["concentration"]["top3_pct"], float)
 
+    def test_api_pdf_report(self, server_fixture):
+        url = server_fixture["base_url"]
+        resp = urllib.request.urlopen(f"{url}/api/report/pdf")
+        assert resp.status == 200
+        assert resp.headers["Content-Type"] == "application/pdf"
+        body = resp.read()
+        assert body[:4] == b"%PDF"
+        assert len(body) > 1000
+
     def test_404(self, server_fixture):
         url = server_fixture["base_url"]
         try:
@@ -1081,6 +1090,66 @@ class TestServer:
             assert False, "Should have raised"
         except urllib.error.HTTPError as e:
             assert e.code == 404
+
+
+# --- PDF Report unit tests ---
+
+
+class TestPdfReport:
+    def test_generates_valid_pdf(self, sqlite_db, sample_txns):
+        import tempfile
+
+        from smtm.pdf_report import generate_pdf
+        from smtm.server import compute_analytics
+
+        sqlite_db.insert_transactions(sample_txns)
+        sqlite_db.set_budget("2026-01", "Dining", 200.0)
+        txns = sqlite_db.get_all_transactions()
+        stats = sqlite_db.get_stats()
+        budgets = sqlite_db.get_budgets()
+        analytics = compute_analytics(txns, budgets)
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            out = Path(f.name)
+
+        try:
+            generate_pdf(txns, stats, budgets, analytics, out)
+            assert out.exists()
+            content = out.read_bytes()
+            assert content[:4] == b"%PDF"
+            assert len(content) > 500
+        finally:
+            out.unlink()
+
+    def test_handles_empty_data(self):
+        import tempfile
+
+        from smtm.pdf_report import generate_pdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            out = Path(f.name)
+
+        try:
+            generate_pdf(
+                [],
+                {
+                    "total": 0,
+                    "categorized": 0,
+                    "expenses": 0,
+                    "income": 0,
+                    "classification_rate": 0,
+                    "date_min": None,
+                    "date_max": None,
+                },
+                [],
+                {},
+                out,
+            )
+            assert out.exists()
+            content = out.read_bytes()
+            assert content[:4] == b"%PDF"
+        finally:
+            out.unlink()
 
 
 # --- Analytics unit tests ---

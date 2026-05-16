@@ -469,6 +469,8 @@ class Handler(BaseHTTPRequestHandler):
             txns = self.db.get_all_transactions()
             budgets = self.db.get_budgets()
             self._json_response({"analytics": compute_analytics(txns, budgets)})
+        elif path == "/api/report/pdf":
+            self._handle_pdf_download()
         else:
             self._error(404, "Not found")
 
@@ -572,6 +574,32 @@ class Handler(BaseHTTPRequestHandler):
                 self._error(404, "Transaction not found")
         else:
             self._error(404, "Not found")
+
+    def _handle_pdf_download(self):
+        from .pdf_report import generate_pdf
+
+        txns = self.db.get_all_transactions()
+        stats = self.db.get_stats()
+        budgets = self.db.get_budgets()
+        analytics = compute_analytics(txns, budgets)
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            tmp_path = Path(f.name)
+
+        try:
+            generate_pdf(txns, stats, budgets, analytics, tmp_path)
+            pdf_bytes = tmp_path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Length", str(len(pdf_bytes)))
+            self.send_header(
+                "Content-Disposition", "attachment; filename=financial_report.pdf"
+            )
+            self.end_headers()
+            self.wfile.write(pdf_bytes)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
 
     def _handle_import(self, preview: bool):
         try:
