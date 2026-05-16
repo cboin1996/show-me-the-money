@@ -1,4 +1,5 @@
 """Generate a self-contained HTML financial dashboard."""
+
 import json
 from collections import defaultdict
 from datetime import date
@@ -29,10 +30,14 @@ def _compute_summary(txns: list[Transaction]) -> dict:
     income = [t for t in txns if t.txn_type == TxnType.INCOME]
     total_exp = sum(t.amount for t in expenses)
     total_inc = sum(t.amount for t in income)
-    categorized = sum(1 for t in expenses if t.category and t.category != "Uncategorized")
+    categorized = sum(
+        1 for t in expenses if t.category and t.category != "Uncategorized"
+    )
     dates = [t.date for t in txns] if txns else [date.today()]
 
-    monthly_expenses: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    monthly_expenses: dict[str, dict[str, float]] = defaultdict(
+        lambda: defaultdict(float)
+    )
     for t in expenses:
         cat = t.category or "Uncategorized"
         monthly_expenses[t.month][cat] += t.amount
@@ -42,9 +47,7 @@ def _compute_summary(txns: list[Transaction]) -> dict:
         monthly_income[t.month] += t.amount
 
     months = sorted(set(t.month for t in txns))
-    categories = sorted(set(
-        t.category or "Uncategorized" for t in expenses
-    ))
+    categories = sorted(set(t.category or "Uncategorized" for t in expenses))
 
     monthly_data = []
     for m in months:
@@ -53,14 +56,14 @@ def _compute_summary(txns: list[Transaction]) -> dict:
             row[cat] = round(monthly_expenses[m].get(cat, 0), 2)
         row["_total_expense"] = round(sum(monthly_expenses[m].values()), 2)
         row["_income"] = round(monthly_income.get(m, 0), 2)
-        row["_net"] = round(monthly_income.get(m, 0) - sum(monthly_expenses[m].values()), 2)
+        row["_net"] = round(
+            monthly_income.get(m, 0) - sum(monthly_expenses[m].values()), 2
+        )
         monthly_data.append(row)
 
     cat_totals = {}
     for cat in categories:
-        cat_totals[cat] = round(sum(
-            monthly_expenses[m].get(cat, 0) for m in months
-        ), 2)
+        cat_totals[cat] = round(sum(monthly_expenses[m].get(cat, 0) for m in months), 2)
 
     return {
         "total_expenses": round(total_exp, 2),
@@ -122,14 +125,23 @@ def _get_color(cat: str, idx: int) -> str:
     if cat in CATEGORY_COLORS:
         return CATEGORY_COLORS[cat]
     fallback = [
-        "#E11D48", "#0891B2", "#7C3AED", "#EA580C", "#2563EB",
-        "#16A34A", "#CA8A04", "#DC2626", "#4F46E5", "#0D9488",
+        "#E11D48",
+        "#0891B2",
+        "#7C3AED",
+        "#EA580C",
+        "#2563EB",
+        "#16A34A",
+        "#CA8A04",
+        "#DC2626",
+        "#4F46E5",
+        "#0D9488",
     ]
     return fallback[idx % len(fallback)]
 
 
-def _render_html(summary: dict, txn_json: list[dict],
-                 budgets: dict[str, dict[str, float]]) -> str:
+def _render_html(
+    summary: dict, txn_json: list[dict], budgets: dict[str, dict[str, float]]
+) -> str:
     categories_json = json.dumps(summary["categories"])
     months_json = json.dumps(summary["months"])
     monthly_data_json = json.dumps(summary["monthly_data"])
@@ -146,14 +158,10 @@ def _render_html(summary: dict, txn_json: list[dict],
         )
     datasets_str = ",\n            ".join(datasets_js)
 
-    donut_colors = [
-        _get_color(c, i) for i, c in enumerate(summary["categories"])
-    ]
+    donut_colors = [_get_color(c, i) for i, c in enumerate(summary["categories"])]
     donut_colors_json = json.dumps(donut_colors)
 
-    avg_monthly = round(
-        summary["total_expenses"] / max(summary["num_months"], 1), 2
-    )
+    avg_monthly = round(summary["total_expenses"] / max(summary["num_months"], 1), 2)
 
     return f"""<!DOCTYPE html>
 <html lang="en">

@@ -13,6 +13,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "black",
+    "isort",
     "pytest>=7.0",
     "pytest-cov",
 ]
@@ -22,6 +24,13 @@ smtm = "smtm.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["smtm*"]
+exclude = ["junit"]
+
+[tool.black]
+line-length = 88
+
+[tool.isort]
+profile = "black"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

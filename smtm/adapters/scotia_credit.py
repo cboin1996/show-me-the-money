@@ -1,15 +1,17 @@
 """Scotia credit card CSV adapters (old 3-col and new 7-col formats)."""
+
 from pathlib import Path
 
 import pandas as pd
 
 from ..models import Transaction, TxnType
-from .base import BaseAdapter, COMMON_IGNORABLE, is_ignorable
+from .base import COMMON_IGNORABLE, BaseAdapter, is_ignorable
 
 
 class ScotiaCreditNewAdapter(BaseAdapter):
     """New format: 7 cols with headers (Filter, Date, Description,
     Sub-description, Status, Type of Transaction, Amount)."""
+
     name = "scotia_credit_new"
 
     def can_parse(self, path: Path, peek_df: pd.DataFrame) -> bool:
@@ -40,19 +42,22 @@ class ScotiaCreditNewAdapter(BaseAdapter):
                 else TxnType.INCOME
             )
 
-            txns.append(Transaction(
-                date=pd.to_datetime(row["Date"]).date(),
-                amount=abs(amount),
-                store_raw=store,
-                sub_description=sub,
-                txn_type=txn_type,
-                source_file=path.name,
-            ))
+            txns.append(
+                Transaction(
+                    date=pd.to_datetime(row["Date"]).date(),
+                    amount=abs(amount),
+                    store_raw=store,
+                    sub_description=sub,
+                    txn_type=txn_type,
+                    source_file=path.name,
+                )
+            )
         return txns
 
 
 class ScotiaCreditOldAdapter(BaseAdapter):
     """Old format: 3 cols, no headers (Date, Store, Amount)."""
+
     name = "scotia_credit_old"
 
     def can_parse(self, path: Path, peek_df: pd.DataFrame) -> bool:
@@ -85,11 +90,13 @@ class ScotiaCreditOldAdapter(BaseAdapter):
 
             txn_type = TxnType.INCOME if amount > 0 else TxnType.EXPENSE
 
-            txns.append(Transaction(
-                date=pd.to_datetime(row["date"]).date(),
-                amount=abs(amount),
-                store_raw=store,
-                txn_type=txn_type,
-                source_file=path.name,
-            ))
+            txns.append(
+                Transaction(
+                    date=pd.to_datetime(row["date"]).date(),
+                    amount=abs(amount),
+                    store_raw=store,
+                    txn_type=txn_type,
+                    source_file=path.name,
+                )
+            )
         return txns

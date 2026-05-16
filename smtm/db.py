@@ -1,4 +1,5 @@
 """SQLite database layer for transaction storage and querying."""
+
 import hashlib
 import json
 import sqlite3
@@ -114,8 +115,9 @@ class Database:
         ).fetchone()
         return row is not None
 
-    def log_import(self, source_file: str, file_hash: str,
-                   row_count: int, new_count: int):
+    def log_import(
+        self, source_file: str, file_hash: str, row_count: int, new_count: int
+    ):
         with self.conn:
             self.conn.execute(
                 "INSERT INTO import_log "
@@ -172,8 +174,7 @@ class Database:
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT * FROM transactions WHERE is_deleted = 0 "
-                "ORDER BY date DESC"
+                "SELECT * FROM transactions WHERE is_deleted = 0 " "ORDER BY date DESC"
             ).fetchall()
         return [self._row_to_txn(r) for r in rows]
 
@@ -207,8 +208,7 @@ class Database:
             )
         return cursor.rowcount > 0
 
-    def update_category(self, uuid: str, category: str,
-                        confidence: str = "manual"):
+    def update_category(self, uuid: str, category: str, confidence: str = "manual"):
         with self.conn:
             self.conn.execute(
                 "UPDATE transactions SET category = ?, confidence = ? "
@@ -219,6 +219,7 @@ class Database:
     def recategorize_all(self, category_db: CategoryDB):
         """Re-run categorization on all uncategorized transactions."""
         from .categorizer import categorize
+
         rows = self.conn.execute(
             "SELECT * FROM transactions "
             "WHERE (category = '' OR category IS NULL) AND is_deleted = 0"
@@ -233,8 +234,12 @@ class Database:
                         "UPDATE transactions "
                         "SET category = ?, confidence = ?, store_normalized = ? "
                         "WHERE uuid = ?",
-                        (result.category, result.confidence,
-                         result.normalized_store, txn.uuid),
+                        (
+                            result.category,
+                            result.confidence,
+                            result.normalized_store,
+                            txn.uuid,
+                        ),
                     )
                     updated += 1
         return updated
@@ -247,8 +252,9 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def add_category_rule(self, pattern: str, category: str,
-                          match_type: str = "exact", priority: int = 0):
+    def add_category_rule(
+        self, pattern: str, category: str, match_type: str = "exact", priority: int = 0
+    ):
         with self.conn:
             self.conn.execute(
                 "INSERT OR REPLACE INTO category_rules "
@@ -334,9 +340,7 @@ class Database:
             "uncategorized": total - categorized,
             "expenses": expenses,
             "income": income,
-            "classification_rate": (
-                categorized / total * 100 if total else 0
-            ),
+            "classification_rate": (categorized / total * 100 if total else 0),
             "date_min": date_range[0],
             "date_max": date_range[1],
         }

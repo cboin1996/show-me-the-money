@@ -1,11 +1,11 @@
 """Base adapter interface for bank CSV parsing."""
+
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 import pandas as pd
 
 from ..models import Transaction
-
 
 COMMON_IGNORABLE = [
     "mb-credit card/loc pay",
@@ -44,13 +44,10 @@ class BaseAdapter(ABC):
     name: str
 
     @abstractmethod
-    def can_parse(self, path: Path, peek_df: pd.DataFrame) -> bool:
-        ...
+    def can_parse(self, path: Path, peek_df: pd.DataFrame) -> bool: ...
 
     @abstractmethod
-    def parse(self, path: str | Path) -> list[Transaction]:
-        ...
+    def parse(self, path: str | Path) -> list[Transaction]: ...
 
     @abstractmethod
-    def ignorable_patterns(self) -> list[str]:
-        ...
+    def ignorable_patterns(self) -> list[str]: ...

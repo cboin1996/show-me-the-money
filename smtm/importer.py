@@ -1,4 +1,5 @@
 """Import pipeline: CSV -> parse -> deduplicate -> categorize -> SQLite."""
+
 import shutil
 from pathlib import Path
 
@@ -122,9 +123,12 @@ def print_import_summary(results: list[dict]):
         total_classified += r.get("classified", 0)
         total_unclassified += r.get("unclassified", 0)
 
-    print(f"\n  Total: {total_parsed} parsed, {total_inserted} new, "
-          f"{total_dupes} duplicates")
+    print(
+        f"\n  Total: {total_parsed} parsed, {total_inserted} new, "
+        f"{total_dupes} duplicates"
+    )
     if total_inserted > 0:
         rate = total_classified / (total_classified + total_unclassified) * 100
-        print(f"  Classification: {total_classified}/{total_inserted} "
-              f"({rate:.0f}%)")
+        print(
+            f"  Classification: {total_classified}/{total_inserted} " f"({rate:.0f}%)"
+        )

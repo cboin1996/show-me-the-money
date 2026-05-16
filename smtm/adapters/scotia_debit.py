@@ -1,11 +1,15 @@
 """Scotia debit CSV adapters (old 5-col and new 7-col formats)."""
+
 from pathlib import Path
 
 import pandas as pd
 
 from ..models import Transaction, TxnType
 from .base import (
-    BaseAdapter, COMMON_IGNORABLE, is_ignorable, is_transfer_withdrawal,
+    COMMON_IGNORABLE,
+    BaseAdapter,
+    is_ignorable,
+    is_transfer_withdrawal,
 )
 
 GENERIC_DESCRIPTIONS = [
@@ -24,6 +28,7 @@ class ScotiaDebitNewAdapter(BaseAdapter):
     """New format: 7+ cols with headers including Balance column.
     Description is often generic ('pos purchase') — real merchant
     is in Sub-description."""
+
     name = "scotia_debit_new"
 
     def can_parse(self, path: Path, peek_df: pd.DataFrame) -> bool:
@@ -59,19 +64,22 @@ class ScotiaDebitNewAdapter(BaseAdapter):
             else:
                 store_raw = desc
 
-            txns.append(Transaction(
-                date=pd.to_datetime(row["Date"]).date(),
-                amount=abs(amount),
-                store_raw=store_raw,
-                sub_description=sub if store_raw != sub else "",
-                txn_type=txn_type,
-                source_file=path.name,
-            ))
+            txns.append(
+                Transaction(
+                    date=pd.to_datetime(row["Date"]).date(),
+                    amount=abs(amount),
+                    store_raw=store_raw,
+                    sub_description=sub if store_raw != sub else "",
+                    txn_type=txn_type,
+                    source_file=path.name,
+                )
+            )
         return txns
 
 
 class ScotiaDebitOldAdapter(BaseAdapter):
     """Old format: 5 cols, no headers (Date, Amount, Null, Type, Store)."""
+
     name = "scotia_debit_old"
 
     def can_parse(self, path: Path, peek_df: pd.DataFrame) -> bool:
@@ -90,7 +98,8 @@ class ScotiaDebitOldAdapter(BaseAdapter):
     def parse(self, path: str | Path) -> list[Transaction]:
         path = Path(path)
         df = pd.read_csv(
-            path, header=None,
+            path,
+            header=None,
             names=["date", "amount", "null", "type", "store"],
         )
         txns: list[Transaction] = []
@@ -105,12 +114,14 @@ class ScotiaDebitOldAdapter(BaseAdapter):
             amount = float(row["amount"])
             txn_type = TxnType.EXPENSE if amount < 0 else TxnType.INCOME
 
-            txns.append(Transaction(
-                date=pd.to_datetime(row["date"]).date(),
-                amount=abs(amount),
-                store_raw=store,
-                sub_description=store,
-                txn_type=txn_type,
-                source_file=path.name,
-            ))
+            txns.append(
+                Transaction(
+                    date=pd.to_datetime(row["date"]).date(),
+                    amount=abs(amount),
+                    store_raw=store,
+                    sub_description=store,
+                    txn_type=txn_type,
+                    source_file=path.name,
+                )
+            )
         return txns

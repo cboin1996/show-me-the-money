@@ -1,12 +1,13 @@
 """Bank CSV adapter registry with auto-detection."""
+
 from pathlib import Path
 
 import pandas as pd
 
 from ..models import Transaction
 from .base import BaseAdapter
-from .scotia_credit import ScotiaCreditOldAdapter, ScotiaCreditNewAdapter
-from .scotia_debit import ScotiaDebitOldAdapter, ScotiaDebitNewAdapter
+from .scotia_credit import ScotiaCreditNewAdapter, ScotiaCreditOldAdapter
+from .scotia_debit import ScotiaDebitNewAdapter, ScotiaDebitOldAdapter
 
 ADAPTERS: list[type[BaseAdapter]] = [
     ScotiaDebitNewAdapter,

@@ -16,3 +16,6 @@ expenseDB.json
 *.db
 .DS_STORE
 .venv/
+junit/
+htmlcov/
+coverage.xml

@@ -1,4 +1,5 @@
 """Core data models."""
+
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
@@ -36,6 +37,7 @@ class Transaction:
 @dataclass
 class CategoryDB:
     """In-memory representation of the merchant database."""
+
     categories: list[str] = field(default_factory=list)
     store_to_category: dict[str, list[str]] = field(default_factory=dict)
     store_pairs: dict[str, str] = field(default_factory=dict)

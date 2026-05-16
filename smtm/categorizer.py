@@ -1,4 +1,5 @@
 """Transaction categorization with multi-strategy matching."""
+
 import re
 from dataclasses import dataclass
 
@@ -20,13 +21,15 @@ _CLEAN_RE = re.compile(
     r"|(\s{2,}.*$)"
 )
 
-GENERIC_DESCRIPTIONS = frozenset([
-    "pos purchase",
-    "pre-authorized payment",
-    "miscellaneous payment",
-    "recurring payment",
-    "cheque",
-])
+GENERIC_DESCRIPTIONS = frozenset(
+    [
+        "pos purchase",
+        "pre-authorized payment",
+        "miscellaneous payment",
+        "recurring payment",
+        "cheque",
+    ]
+)
 
 
 def clean_store_name(raw: str) -> str:
@@ -68,14 +71,10 @@ def categorize(txn: Transaction, db: CategoryDB) -> CategorizationResult:
     skip_exact_raw = raw in GENERIC_DESCRIPTIONS
 
     if not skip_exact_raw and raw in db.store_to_category:
-        return CategorizationResult(
-            db.store_to_category[raw][0], raw, "exact"
-        )
+        return CategorizationResult(db.store_to_category[raw][0], raw, "exact")
 
     if not skip_exact_raw and cleaned in db.store_to_category:
-        return CategorizationResult(
-            db.store_to_category[cleaned][0], cleaned, "exact"
-        )
+        return CategorizationResult(db.store_to_category[cleaned][0], cleaned, "exact")
 
     for name in (raw, cleaned):
         if name in db.store_pairs:
@@ -92,9 +91,7 @@ def categorize(txn: Transaction, db: CategoryDB) -> CategorizationResult:
     if sub_cleaned and sub_cleaned in db.store_pairs:
         norm = db.store_pairs[sub_cleaned]
         if norm in db.store_to_category:
-            return CategorizationResult(
-                db.store_to_category[norm][0], norm, "exact"
-            )
+            return CategorizationResult(db.store_to_category[norm][0], norm, "exact")
 
     search_strings = [s for s in (raw, cleaned, sub, sub_cleaned) if s]
     for key, cats in db.store_to_category.items():
