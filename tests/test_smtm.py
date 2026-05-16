@@ -407,6 +407,77 @@ class TestSQLiteDB:
         assert match[0]["amount"] == 100.0
         assert match[0]["reimburser"] == "My Friend"
 
+    def test_reimburser_pairs_crud(self, sqlite_db):
+        assert sqlite_db.get_reimburser_pairs() == []
+        sqlite_db.add_reimburser_pair("canada life", "humanity wellness")
+        sqlite_db.add_reimburser_pair("employer", "gym membership")
+        pairs = sqlite_db.get_reimburser_pairs()
+        assert len(pairs) == 2
+        assert pairs[0]["reimburser_pattern"] == "canada life"
+        assert pairs[0]["expense_pattern"] == "humanity wellness"
+        assert sqlite_db.remove_reimburser_pair("canada life", "humanity wellness")
+        assert not sqlite_db.remove_reimburser_pair("nonexist", "nope")
+        assert len(sqlite_db.get_reimburser_pairs()) == 1
+
+    def test_pending_with_suggested_expenses(self, sqlite_db):
+        """When pairs are configured, pending shows suggested expense matches."""
+        sqlite_db.add_reimburser("canada life", "Canada Life", "substring")
+        sqlite_db.add_reimburser_pair("canada life", "wellness")
+        # Add income from reimburser
+        income = Transaction(
+            date=date(2026, 5, 10),
+            amount=80.0,
+            store_raw="canada life ins",
+            txn_type=TxnType.INCOME,
+            source_file="test.csv",
+            store_normalized="canada life ins",
+        )
+        # Add expense that matches the pair
+        expense = Transaction(
+            date=date(2026, 5, 5),
+            amount=80.0,
+            store_raw="humanity wellness center",
+            txn_type=TxnType.EXPENSE,
+            source_file="test.csv",
+            store_normalized="humanity wellness center",
+        )
+        sqlite_db.insert_transaction(income)
+        sqlite_db.insert_transaction(expense)
+        pending = sqlite_db.get_pending_reimbursements()
+        match = [p for p in pending if p["uuid"] == income.uuid]
+        assert len(match) == 1
+        assert "suggested_expenses" in match[0]
+        suggestions = match[0]["suggested_expenses"]
+        assert len(suggestions) >= 1
+        assert suggestions[0]["uuid"] == expense.uuid
+
+    def test_discover_reimburser_pairs(self, sqlite_db):
+        """Discover pairs from historical links."""
+        expense = Transaction(
+            date=date(2026, 3, 1),
+            amount=100.0,
+            store_raw="wellness spa",
+            txn_type=TxnType.EXPENSE,
+            source_file="test.csv",
+            store_normalized="wellness spa",
+        )
+        income = Transaction(
+            date=date(2026, 3, 5),
+            amount=100.0,
+            store_raw="insurance co",
+            txn_type=TxnType.INCOME,
+            source_file="test.csv",
+            store_normalized="insurance co",
+        )
+        sqlite_db.insert_transaction(expense)
+        sqlite_db.insert_transaction(income)
+        sqlite_db.link_transactions(expense.uuid, income.uuid)
+        discovered = sqlite_db.discover_reimburser_pairs()
+        assert len(discovered) >= 1
+        assert discovered[0]["reimburser_pattern"] == "insurance co"
+        assert discovered[0]["expense_pattern"] == "wellness spa"
+        assert discovered[0]["link_count"] == 1
+
 
 # --- Adapter tests ---
 
@@ -826,6 +897,33 @@ class TestEndToEnd:
         )
         assert result.returncode == 0
         assert "Removed" in result.stdout
+        # Pairs
+        result = subprocess.run(
+            base + ["reimburse", "add-pair", "canada life", "wellness"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "Pair added" in result.stdout
+        result = subprocess.run(
+            base + ["reimburse", "pairs"], capture_output=True, text=True
+        )
+        assert result.returncode == 0
+        assert "canada life" in result.stdout
+        assert "wellness" in result.stdout
+        # Discover
+        result = subprocess.run(
+            base + ["reimburse", "discover"], capture_output=True, text=True
+        )
+        assert result.returncode == 0
+        # Remove pair
+        result = subprocess.run(
+            base + ["reimburse", "remove-pair", "canada life", "wellness"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "Pair removed" in result.stdout
 
     def test_import_dedup(self, tmp_path):
         """Importing the same files twice should produce 0 new on second run."""
@@ -1293,6 +1391,67 @@ class TestServer:
         assert any(p["store"] == "payroll" for p in data["pending"])
         # Cleanup
         db.remove_reimburser("payroll")
+
+    def test_api_reimburser_pairs(self, server_fixture):
+        url = server_fixture["base_url"]
+        # Initially empty
+        data = _get(url, "/api/reimburser-pairs")
+        initial = len(data["pairs"])
+        # Add pair
+        result = _post(
+            url,
+            "/api/reimburser-pairs",
+            {"reimburser_pattern": "canada life", "expense_pattern": "wellness"},
+        )
+        assert result["ok"]
+        data = _get(url, "/api/reimburser-pairs")
+        assert len(data["pairs"]) == initial + 1
+        # Delete pair
+        result = _post(
+            url,
+            "/api/reimburser-pairs/delete",
+            {"reimburser_pattern": "canada life", "expense_pattern": "wellness"},
+        )
+        assert result["ok"]
+        data = _get(url, "/api/reimburser-pairs")
+        assert len(data["pairs"]) == initial
+
+    def test_api_reimburser_pairs_discover(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/reimburser-pairs/discover")
+        assert "discovered" in data
+
+    def test_api_reimburser_pairs_accept(self, server_fixture):
+        url = server_fixture["base_url"]
+        pairs = [{"reimburser_pattern": "ins co", "expense_pattern": "gym"}]
+        result = _post(url, "/api/reimburser-pairs/accept", {"pairs": pairs})
+        assert result["ok"]
+        assert result["added"] == 1
+        # Verify
+        data = _get(url, "/api/reimburser-pairs")
+        assert any(p["expense_pattern"] == "gym" for p in data["pairs"])
+        # Cleanup
+        _post(
+            url,
+            "/api/reimburser-pairs/delete",
+            {"reimburser_pattern": "ins co", "expense_pattern": "gym"},
+        )
+
+    def test_api_pending_with_suggestions(self, server_fixture):
+        """Pending reimbursements include suggested expenses when pairs configured."""
+        url = server_fixture["base_url"]
+        db = server_fixture["db"]
+        db.add_reimburser("payroll", "Employer", "substring")
+        db.add_reimburser_pair("payroll", "uber eats")
+        data = _get(url, "/api/reimbursements/pending")
+        pending = [p for p in data["pending"] if p["store"] == "payroll"]
+        assert len(pending) >= 1
+        # Should have suggested_expenses with uber eats matches
+        assert "suggested_expenses" in pending[0]
+        assert len(pending[0]["suggested_expenses"]) > 0
+        # Cleanup
+        db.remove_reimburser("payroll")
+        db.remove_reimburser_pair("payroll", "uber eats")
 
     def test_404(self, server_fixture):
         url = server_fixture["base_url"]

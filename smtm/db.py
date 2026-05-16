@@ -68,6 +68,13 @@ CREATE TABLE IF NOT EXISTS reimbursers (
     match_type TEXT NOT NULL DEFAULT 'substring'
 );
 
+CREATE TABLE IF NOT EXISTS reimburser_pairs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reimburser_pattern TEXT NOT NULL,
+    expense_pattern TEXT NOT NULL,
+    UNIQUE(reimburser_pattern, expense_pattern)
+);
+
 CREATE TABLE IF NOT EXISTS import_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_file TEXT NOT NULL,
@@ -367,10 +374,121 @@ class Database:
                             "store": t.store_normalized or t.store_raw,
                             "amount": round(t.amount, 2),
                             "reimburser": r["label"] or r["pattern"],
+                            "reimburser_pattern": r["pattern"],
                         }
                     )
                     break
+        # Attach suggested expenses based on reimburser_pairs
+        pairs = self.get_reimburser_pairs()
+        if pairs and pending:
+            expenses = self.get_expenses()
+            unlinked_expenses = [e for e in expenses if not e.linked_to]
+            for p in pending:
+                matched_expense_patterns = [
+                    pair["expense_pattern"]
+                    for pair in pairs
+                    if pair["reimburser_pattern"].lower()
+                    in p["reimburser_pattern"].lower()
+                ]
+                if matched_expense_patterns:
+                    suggestions = []
+                    for e in unlinked_expenses:
+                        e_store = (e.store_normalized or e.store_raw).lower()
+                        for ep in matched_expense_patterns:
+                            if ep.lower() in e_store:
+                                suggestions.append(
+                                    {
+                                        "uuid": e.uuid,
+                                        "date": e.date.isoformat(),
+                                        "store": e.store_normalized or e.store_raw,
+                                        "amount": round(e.amount, 2),
+                                    }
+                                )
+                                break
+                    # Sort by closest amount match, then by date proximity
+                    suggestions.sort(
+                        key=lambda s: (
+                            abs(s["amount"] - p["amount"]),
+                            abs(
+                                (
+                                    date.fromisoformat(s["date"])
+                                    - date.fromisoformat(p["date"])
+                                ).days
+                            ),
+                        )
+                    )
+                    p["suggested_expenses"] = suggestions[:10]
         return pending
+
+    # -- Reimburser pairs --
+
+    def get_reimburser_pairs(self) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM reimburser_pairs ORDER BY reimburser_pattern"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def add_reimburser_pair(
+        self, reimburser_pattern: str, expense_pattern: str
+    ) -> bool:
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO reimburser_pairs "
+                "(reimburser_pattern, expense_pattern) VALUES (?, ?)",
+                (reimburser_pattern, expense_pattern),
+            )
+        return True
+
+    def remove_reimburser_pair(
+        self, reimburser_pattern: str, expense_pattern: str
+    ) -> bool:
+        with self.conn:
+            cursor = self.conn.execute(
+                "DELETE FROM reimburser_pairs "
+                "WHERE reimburser_pattern = ? AND expense_pattern = ?",
+                (reimburser_pattern, expense_pattern),
+            )
+        return cursor.rowcount > 0
+
+    def discover_reimburser_pairs(self) -> list[dict]:
+        """Scan historical links to discover reimburser-to-expense patterns."""
+        with self._lock:
+            # Find expenses that have been linked (have linked_to set)
+            rows = self.conn.execute(
+                "SELECT store_normalized, store_raw, linked_to FROM transactions "
+                "WHERE linked_to != '' AND txn_type = 'expense' AND adjustment > 0"
+            ).fetchall()
+        if not rows:
+            return []
+        # For each linked expense, find the income it was linked to
+        pair_counts: dict[tuple[str, str], int] = {}
+        for row in rows:
+            expense_store = (row["store_normalized"] or row["store_raw"]).lower()
+            income_uuid = row["linked_to"]
+            with self._lock:
+                inc_row = self.conn.execute(
+                    "SELECT store_normalized, store_raw FROM transactions "
+                    "WHERE uuid = ?",
+                    (income_uuid,),
+                ).fetchone()
+            if inc_row:
+                income_store = (
+                    inc_row["store_normalized"] or inc_row["store_raw"]
+                ).lower()
+                key = (income_store, expense_store)
+                pair_counts[key] = pair_counts.get(key, 0) + 1
+        # Return pairs sorted by frequency
+        discovered = [
+            {
+                "reimburser_pattern": k[0],
+                "expense_pattern": k[1],
+                "link_count": v,
+            }
+            for k, v in pair_counts.items()
+        ]
+        discovered.sort(key=lambda x: x["link_count"], reverse=True)
+        return discovered
 
     # -- Budgets --
 

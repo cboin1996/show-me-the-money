@@ -735,9 +735,23 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
             <button class="btn" id="addReimburserBtn">Add Reimburser</button>
         </div>
         <div class="scroll-table" style="max-height:200px"><table><thead><tr><th>Pattern</th><th>Label</th><th>Match</th><th></th></tr></thead><tbody id="reimbursersBody"></tbody></table></div>
+        <h3 style="margin-top:16px;font-size:14px">Reimburser Pairs <span id="reimbPairsCount" style="font-size:12px;color:#94a3b8"></span></h3>
+        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Link a reimburser to the expense they typically cover</p>
+        <div class="form-row">
+            <input type="text" id="newPairReimburser" placeholder="Reimburser pattern (e.g. canada life)">
+            <input type="text" id="newPairExpense" placeholder="Expense pattern (e.g. humanity wellness)">
+            <button class="btn" id="addReimbPairBtn">Add Pair</button>
+            <button class="btn btn-outline" id="discoverPairsBtn">Discover from History</button>
+        </div>
+        <div class="scroll-table" style="max-height:150px"><table><thead><tr><th>Reimburser</th><th>Expense</th><th></th></tr></thead><tbody id="reimburserPairsBody"></tbody></table></div>
+        <div id="discoveredPairs" class="hidden" style="margin-top:12px">
+            <h4 style="font-size:13px;color:#fbbf24;margin-bottom:8px">Discovered Patterns</h4>
+            <div class="scroll-table" style="max-height:150px"><table><thead><tr><th>Reimburser</th><th>Expense</th><th>Links</th><th></th></tr></thead><tbody id="discoveredPairsBody"></tbody></table></div>
+            <button class="btn btn-success btn-sm" id="acceptAllDiscoveredBtn" style="margin-top:8px">Accept All</button>
+        </div>
         <h3 style="margin-top:16px;font-size:14px">Pending Reimbursements</h3>
-        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Income from known reimbursers not yet linked to an expense</p>
-        <div class="scroll-table" style="max-height:250px"><table><thead><tr><th>Date</th><th>From</th><th>Amount</th><th>Actions</th></tr></thead><tbody id="pendingReimbBody" data-testid="pending-reimb-body"></tbody></table></div>
+        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Income from known reimbursers not yet linked to an expense. Suggested matches shown when pairs are configured.</p>
+        <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Date</th><th>From</th><th>Amount</th><th>Suggested Expense</th><th>Actions</th></tr></thead><tbody id="pendingReimbBody" data-testid="pending-reimb-body"></tbody></table></div>
     </div>
     <div class="section">
         <h2>Recycle Bin</h2>
@@ -804,12 +818,13 @@ const App = {
     charts: {},
 
     async init() {
-        const [txns, summary, budgets, rules, pairs, history, anomalies, uncat, suggest, deleted, analytics, reimbursers, pendingReimb] = await Promise.all([
+        const [txns, summary, budgets, rules, pairs, history, anomalies, uncat, suggest, deleted, analytics, reimbursers, pendingReimb, reimburserPairs] = await Promise.all([
             api('/api/transactions'), api('/api/summary'), api('/api/budgets'),
             api('/api/rules'), api('/api/store-pairs'), api('/api/history'),
             api('/api/anomalies'), api('/api/uncategorized'), api('/api/suggest'),
             api('/api/transactions/deleted'), api('/api/analytics'),
             api('/api/reimbursers'), api('/api/reimbursements/pending'),
+            api('/api/reimburser-pairs'),
         ]);
         this.data.transactions = txns.transactions || [];
         this.data.summary = summary.summary || {};
@@ -824,6 +839,7 @@ const App = {
         this.data.analytics = analytics.analytics || {};
         this.data.reimbursers = reimbursers.reimbursers || [];
         this.data.pendingReimb = pendingReimb.pending || [];
+        this.data.reimburserPairs = reimburserPairs.pairs || [];
         this.renderAll();
     },
 
@@ -1157,15 +1173,65 @@ const App = {
         body.innerHTML = this.data.reimbursers.map(r =>
             `<tr><td>${r.pattern}</td><td>${r.label || ''}</td><td>${r.match_type}</td><td><button class="btn btn-sm btn-danger" onclick="App.deleteReimburser('${r.pattern.replace(/'/g,"\\'")}')">Del</button></td></tr>`
         ).join('');
-        const pending = document.getElementById('pendingReimbBody');
-        pending.innerHTML = this.data.pendingReimb.map(p =>
-            `<tr><td>${p.date}</td><td>${p.store}</td><td style="color:#4ade80">+$${p.amount.toFixed(2)}</td><td><button class="btn btn-sm btn-success" onclick="App.linkPending('${p.uuid}')">Link to Expense</button></td></tr>`
+        // Pairs
+        const pairsBody = document.getElementById('reimburserPairsBody');
+        document.getElementById('reimbPairsCount').textContent = `(${this.data.reimburserPairs.length})`;
+        pairsBody.innerHTML = this.data.reimburserPairs.map(p =>
+            `<tr><td>${p.reimburser_pattern}</td><td>${p.expense_pattern}</td><td><button class="btn btn-sm btn-danger" onclick="App.deleteReimburserPair('${p.reimburser_pattern.replace(/'/g,"\\'")}','${p.expense_pattern.replace(/'/g,"\\'")}')">Del</button></td></tr>`
         ).join('');
+        // Pending with suggestions
+        const pending = document.getElementById('pendingReimbBody');
+        pending.innerHTML = this.data.pendingReimb.map(p => {
+            const sugg = (p.suggested_expenses || []);
+            const suggHtml = sugg.length > 0
+                ? `<select onchange="if(this.value)App.linkFromSuggestion('${p.uuid}',this.value)"><option value="">-- suggested --</option>${sugg.map(s => `<option value="${s.uuid}">${s.date} ${s.store} -$${s.amount.toFixed(2)}</option>`).join('')}</select>`
+                : `<span style="color:#64748b;font-size:11px">No pair configured</span>`;
+            return `<tr><td>${p.date}</td><td>${p.store}</td><td style="color:#4ade80">+$${p.amount.toFixed(2)}</td><td>${suggHtml}</td><td><button class="btn btn-sm btn-success" onclick="App.linkPending('${p.uuid}')">Browse All</button></td></tr>`;
+        }).join('');
     },
 
     async deleteReimburser(pattern) {
         await api('/api/reimbursers/' + encodeURIComponent(pattern), {method:'DELETE'});
         toast('Reimburser removed');
+        await this.refresh();
+    },
+
+    async deleteReimburserPair(reimburserPattern, expensePattern) {
+        await apiPost('/api/reimburser-pairs/delete', {reimburser_pattern: reimburserPattern, expense_pattern: expensePattern});
+        toast('Pair removed');
+        await this.refresh();
+    },
+
+    async linkFromSuggestion(incomeUuid, expenseUuid) {
+        await api('/api/link', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({expense_uuid:expenseUuid, income_uuid:incomeUuid})});
+        toast('Reimbursement linked');
+        await this.refresh();
+    },
+
+    async discoverPairs() {
+        const data = await api('/api/reimburser-pairs/discover');
+        const discovered = data.discovered || [];
+        if (!discovered.length) { toast('No patterns discovered from history'); return; }
+        this._discoveredPairs = discovered;
+        const body = document.getElementById('discoveredPairsBody');
+        body.innerHTML = discovered.map((d, i) =>
+            `<tr><td>${d.reimburser_pattern}</td><td>${d.expense_pattern}</td><td>${d.link_count}</td><td><button class="btn btn-sm btn-success" onclick="App.acceptDiscovered(${i})">Accept</button></td></tr>`
+        ).join('');
+        document.getElementById('discoveredPairs').classList.remove('hidden');
+    },
+
+    async acceptDiscovered(idx) {
+        const d = this._discoveredPairs[idx];
+        await apiPost('/api/reimburser-pairs', {reimburser_pattern: d.reimburser_pattern, expense_pattern: d.expense_pattern});
+        toast(`Pair saved: ${d.reimburser_pattern} -> ${d.expense_pattern}`);
+        await this.refresh();
+    },
+
+    async acceptAllDiscovered() {
+        if (!this._discoveredPairs || !this._discoveredPairs.length) return;
+        await apiPost('/api/reimburser-pairs/accept', {pairs: this._discoveredPairs});
+        toast(`Saved ${this._discoveredPairs.length} pairs`);
+        document.getElementById('discoveredPairs').classList.add('hidden');
         await this.refresh();
     },
 
@@ -1464,6 +1530,20 @@ document.getElementById('addReimburserBtn').addEventListener('click', async () =
     document.getElementById('newReimburserLabel').value = '';
     await App.refresh();
 });
+
+// --- Reimburser pairs ---
+document.getElementById('addReimbPairBtn').addEventListener('click', async () => {
+    const rp = document.getElementById('newPairReimburser').value.trim();
+    const ep = document.getElementById('newPairExpense').value.trim();
+    if (!rp || !ep) return;
+    await apiPost('/api/reimburser-pairs', {reimburser_pattern: rp, expense_pattern: ep});
+    toast(`Pair added: ${rp} -> ${ep}`);
+    document.getElementById('newPairReimburser').value = '';
+    document.getElementById('newPairExpense').value = '';
+    await App.refresh();
+});
+document.getElementById('discoverPairsBtn').addEventListener('click', () => App.discoverPairs());
+document.getElementById('acceptAllDiscoveredBtn').addEventListener('click', () => App.acceptAllDiscovered());
 
 // --- Apply all suggestions ---
 document.getElementById('applyAllSuggBtn').addEventListener('click', () => App.applyAllSuggestions());

@@ -473,6 +473,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json_response({"reimbursers": self.db.get_reimbursers()})
         elif path == "/api/reimbursements/pending":
             self._json_response({"pending": self.db.get_pending_reimbursements()})
+        elif path == "/api/reimburser-pairs":
+            self._json_response({"pairs": self.db.get_reimburser_pairs()})
+        elif path == "/api/reimburser-pairs/discover":
+            self._json_response({"discovered": self.db.discover_reimburser_pairs()})
         elif path == "/api/report/pdf":
             self._handle_pdf_download()
         else:
@@ -555,6 +559,34 @@ class Handler(BaseHTTPRequestHandler):
             match_type = data.get("match_type", "substring")
             self.db.add_reimburser(pattern, label, match_type)
             self._json_response({"ok": True})
+        elif path == "/api/reimburser-pairs":
+            data = self._read_json_body()
+            reimburser_pattern = data.get("reimburser_pattern", "")
+            expense_pattern = data.get("expense_pattern", "")
+            if not reimburser_pattern or not expense_pattern:
+                self._error(400, "reimburser_pattern and expense_pattern required")
+                return
+            self.db.add_reimburser_pair(reimburser_pattern, expense_pattern)
+            self._json_response({"ok": True})
+        elif path == "/api/reimburser-pairs/delete":
+            data = self._read_json_body()
+            reimburser_pattern = data.get("reimburser_pattern", "")
+            expense_pattern = data.get("expense_pattern", "")
+            if self.db.remove_reimburser_pair(reimburser_pattern, expense_pattern):
+                self._json_response({"ok": True})
+            else:
+                self._error(404, "Pair not found")
+        elif path == "/api/reimburser-pairs/accept":
+            data = self._read_json_body()
+            pairs = data.get("pairs", [])
+            added = 0
+            for pair in pairs:
+                rp = pair.get("reimburser_pattern", "")
+                ep = pair.get("expense_pattern", "")
+                if rp and ep:
+                    self.db.add_reimburser_pair(rp, ep)
+                    added += 1
+            self._json_response({"ok": True, "added": added})
         elif path == "/api/link":
             data = self._read_json_body()
             expense_uuid = data.get("expense_uuid", "")

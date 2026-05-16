@@ -344,6 +344,35 @@ def cmd_reimburse(args):
             print(f"  Linked {args.income_uuid[:8]}... -> {args.expense_uuid[:8]}...")
         else:
             print("  Failed: transactions not found or already linked.")
+    elif args.reimburse_action == "pairs":
+        pairs = db.get_reimburser_pairs()
+        if not pairs:
+            print("  No reimburser pairs configured.")
+        else:
+            print(f"  {'Reimburser':<30} {'Expense':<30}")
+            print(f"  {'-'*30} {'-'*30}")
+            for p in pairs:
+                print(f"  {p['reimburser_pattern']:<30} {p['expense_pattern']:<30}")
+    elif args.reimburse_action == "add-pair":
+        db.add_reimburser_pair(args.reimburser_pattern, args.expense_pattern)
+        print(f"  Pair added: {args.reimburser_pattern} -> {args.expense_pattern}")
+    elif args.reimburse_action == "remove-pair":
+        if db.remove_reimburser_pair(args.reimburser_pattern, args.expense_pattern):
+            print("  Pair removed.")
+        else:
+            print("  Pair not found.")
+    elif args.reimburse_action == "discover":
+        discovered = db.discover_reimburser_pairs()
+        if not discovered:
+            print("  No patterns discovered from historical links.")
+        else:
+            print(f"  {'Reimburser':<30} {'Expense':<30} {'Links'}")
+            print(f"  {'-'*30} {'-'*30} {'-'*5}")
+            for d in discovered:
+                print(
+                    f"  {d['reimburser_pattern']:<30} "
+                    f"{d['expense_pattern']:<30} {d['link_count']}"
+                )
 
     db.close()
 
@@ -447,6 +476,20 @@ def main():
     reimb_link = reimb_sub.add_parser("link", help="Link income to expense")
     reimb_link.add_argument("income_uuid", help="Income transaction UUID")
     reimb_link.add_argument("expense_uuid", help="Expense transaction UUID")
+
+    reimb_sub.add_parser("pairs", help="List reimburser-to-expense pairs")
+
+    reimb_ap = reimb_sub.add_parser("add-pair", help="Add reimburser-to-expense pair")
+    reimb_ap.add_argument("reimburser_pattern", help="Reimburser store pattern")
+    reimb_ap.add_argument("expense_pattern", help="Expense store pattern")
+
+    reimb_rp = reimb_sub.add_parser(
+        "remove-pair", help="Remove reimburser-to-expense pair"
+    )
+    reimb_rp.add_argument("reimburser_pattern", help="Reimburser store pattern")
+    reimb_rp.add_argument("expense_pattern", help="Expense store pattern")
+
+    reimb_sub.add_parser("discover", help="Discover pairs from historical links")
 
     # serve
     srv = sub.add_parser("serve", help="Start interactive web dashboard")
