@@ -13,6 +13,7 @@ def _txns_to_json(txns: list[Transaction]) -> list[dict]:
             "date": t.date.isoformat(),
             "month": t.month,
             "amount": round(t.amount, 2),
+            "effective_amount": round(t.effective_amount, 2),
             "store_raw": t.store_raw,
             "store_normalized": t.store_normalized or t.store_raw,
             "category": t.category or "Uncategorized",
@@ -20,15 +21,17 @@ def _txns_to_json(txns: list[Transaction]) -> list[dict]:
             "type": t.txn_type.value,
             "source_file": t.source_file,
             "uuid": t.uuid,
+            "linked_to": t.linked_to,
+            "adjustment": round(t.adjustment, 2),
         }
         for t in txns
     ]
 
 
 def _compute_summary(txns: list[Transaction]) -> dict:
-    expenses = [t for t in txns if t.txn_type == TxnType.EXPENSE]
-    income = [t for t in txns if t.txn_type == TxnType.INCOME]
-    total_exp = sum(t.amount for t in expenses)
+    expenses = [t for t in txns if t.txn_type == TxnType.EXPENSE and not t.is_deleted]
+    income = [t for t in txns if t.txn_type == TxnType.INCOME and not t.is_deleted]
+    total_exp = sum(t.effective_amount for t in expenses)
     total_inc = sum(t.amount for t in income)
     categorized = sum(
         1 for t in expenses if t.category and t.category != "Uncategorized"
@@ -40,7 +43,7 @@ def _compute_summary(txns: list[Transaction]) -> dict:
     )
     for t in expenses:
         cat = t.category or "Uncategorized"
-        monthly_expenses[t.month][cat] += t.amount
+        monthly_expenses[t.month][cat] += t.effective_amount
 
     monthly_income: dict[str, float] = defaultdict(float)
     for t in income:
@@ -571,9 +574,12 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
 </head>
 <body>
 
-<div class="header">
-    <h1>show-me-the-money</h1>
-    <p id="headerSub">Loading...</p>
+<div class="header" style="display:flex;align-items:center;justify-content:space-between">
+    <div>
+        <h1>show-me-the-money</h1>
+        <p id="headerSub">Loading...</p>
+    </div>
+    <a href="/api/report/pdf" class="btn btn-outline" data-testid="export-pdf-btn" download="financial_report.pdf" style="white-space:nowrap">Download PDF</a>
 </div>
 
 <div class="cards" id="cards" data-testid="summary-cards"></div>
@@ -736,7 +742,7 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
     <div><label>To</label><br><input type="date" id="dateTo" style="width:130px"></div>
     <div><label>Min $</label><br><input type="number" id="minAmount" style="width:80px" step="0.01"></div>
     <div><label>Max $</label><br><input type="number" id="maxAmount" style="width:80px" step="0.01"></div>
-    <div style="margin-left:auto;align-self:flex-end;display:flex;gap:8px"><button class="btn btn-outline" id="exportCsvBtn" data-testid="export-csv-btn">Export CSV</button><a href="/api/report/pdf" class="btn btn-outline" data-testid="export-pdf-btn" download="financial_report.pdf">Download PDF</a></div>
+    <div style="margin-left:auto;align-self:flex-end"><button class="btn btn-outline" id="exportCsvBtn" data-testid="export-csv-btn">Export CSV</button></div>
 </div>
 <div id="bulkBar" class="bulk-bar hidden" data-testid="bulk-bar">
     <span><span class="count" id="bulkCount">0</span> selected</span>
@@ -1155,6 +1161,37 @@ const App = {
         await this.refresh();
     },
 
+    showLinkModal(expenseUuid) {
+        this._linkExpenseUuid = expenseUuid;
+        const incomes = this.data.transactions.filter(t => t.type === 'income');
+        const body = document.getElementById('linkModalBody');
+        if (incomes.length === 0) {
+            body.innerHTML = '<p>No income transactions available to link.</p>';
+        } else {
+            body.innerHTML = `<table style="width:100%"><thead><tr><th>Date</th><th>Store</th><th>Amount</th><th></th></tr></thead><tbody>` +
+                incomes.map(t => `<tr><td>${t.date}</td><td>${t.store_normalized}</td><td>+$${t.amount.toFixed(2)}</td><td><button class="btn btn-sm btn-success" onclick="App.linkTo('${t.uuid}')">Link</button></td></tr>`).join('') +
+                `</tbody></table>`;
+        }
+        document.getElementById('linkModal').classList.remove('hidden');
+    },
+
+    closeLinkModal() {
+        document.getElementById('linkModal').classList.add('hidden');
+    },
+
+    async linkTo(incomeUuid) {
+        await api('/api/link', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({expense_uuid:this._linkExpenseUuid, income_uuid:incomeUuid})});
+        this.closeLinkModal();
+        toast('Offset linked');
+        await this.refresh();
+    },
+
+    async unlinkTxn(expenseUuid) {
+        await api('/api/unlink', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({expense_uuid:expenseUuid})});
+        toast('Offset removed');
+        await this.refresh();
+    },
+
     populateFilters() {
         const s = this.data.summary;
         const catFilter = document.getElementById('categoryFilter');
@@ -1204,14 +1241,23 @@ const App = {
         const catOpts = cats.map(c=>`<option value="${c}">${c}</option>`).join('');
         document.getElementById('txnBody').innerHTML = filtered.slice(0, 500).map(t => {
             const checked = this._selected.has(t.uuid) ? 'checked' : '';
-            return `<tr>
+            const hasOffset = t.adjustment > 0;
+            const amtDisplay = hasOffset
+                ? `<span style="text-decoration:line-through;opacity:0.5">$${t.amount.toFixed(2)}</span> $${t.effective_amount.toFixed(2)}`
+                : `$${t.amount.toFixed(2)}`;
+            const linkBtn = t.type === 'expense' && !hasOffset
+                ? `<button class="btn btn-sm btn-outline" onclick="App.showLinkModal('${t.uuid}')" title="Link offset">Lnk</button>`
+                : hasOffset
+                ? `<button class="btn btn-sm btn-outline" onclick="App.unlinkTxn('${t.uuid}')" title="Remove offset" style="color:#f59e0b">Ulk</button>`
+                : '';
+            return `<tr${hasOffset ? ' style="background:#fefce8"' : ''}>
                 <td><input type="checkbox" data-uuid="${t.uuid}" ${checked} onchange="App.toggleSelect('${t.uuid}', this.checked)"></td>
                 <td>${t.date}</td>
                 <td title="${t.store_raw}">${t.store_normalized}</td>
                 <td>${catBadge(t.category)} <select class="inline-cat-select" onchange="App.inlineCategory('${t.uuid}', this.value)"><option value="">edit</option>${catOpts}</select></td>
-                <td style="text-align:right;font-variant-numeric:tabular-nums">${t.type==='income'?'+':'-'}$${t.amount.toFixed(2)}</td>
+                <td style="text-align:right;font-variant-numeric:tabular-nums">${t.type==='income'?'+':'-'}${amtDisplay}</td>
                 <td>${t.type}</td>
-                <td><button class="btn btn-sm btn-danger" onclick="App.deleteTxn('${t.uuid}')">Del</button></td>
+                <td style="display:flex;gap:4px">${linkBtn}<button class="btn btn-sm btn-danger" onclick="App.deleteTxn('${t.uuid}')">Del</button></td>
             </tr>`;
         }).join('');
         document.getElementById('selectAll').checked = false;
@@ -1428,6 +1474,18 @@ async function doImport(filename, btn) {
 // --- Init ---
 App.init();
 </script>
+
+<div id="linkModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000" onclick="if(event.target===this)App.closeLinkModal()">
+    <div style="background:#1e293b;border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:70vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <h3 style="margin:0">Link Income Offset</h3>
+            <button class="btn btn-sm btn-outline" onclick="App.closeLinkModal()">X</button>
+        </div>
+        <p style="font-size:13px;color:#94a3b8;margin-bottom:12px">Select an income transaction to offset this expense. The income amount will be subtracted from the expense total.</p>
+        <div id="linkModalBody"></div>
+    </div>
+</div>
+
 </body>
 </html>"""
     )

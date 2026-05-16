@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     txn_type TEXT NOT NULL DEFAULT 'expense',
     source_file TEXT DEFAULT '',
     is_deleted INTEGER DEFAULT 0,
+    linked_to TEXT DEFAULT '',
+    adjustment REAL DEFAULT 0.0,
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -112,6 +114,22 @@ class Database:
                     "INSERT INTO schema_version (version) VALUES (?)",
                     (SCHEMA_VERSION,),
                 )
+            self._migrate()
+
+    def _migrate(self):
+        cols = {
+            r[1]
+            for r in self.conn.execute("PRAGMA table_info(transactions)").fetchall()
+        }
+        with self.conn:
+            if "linked_to" not in cols:
+                self.conn.execute(
+                    "ALTER TABLE transactions ADD COLUMN linked_to TEXT DEFAULT ''"
+                )
+            if "adjustment" not in cols:
+                self.conn.execute(
+                    "ALTER TABLE transactions ADD COLUMN adjustment REAL DEFAULT 0.0"
+                )
 
     # -- Import log --
 
@@ -142,8 +160,8 @@ class Database:
                     "INSERT INTO transactions "
                     "(uuid, date, amount, store_raw, store_normalized, "
                     "sub_description, category, confidence, txn_type, "
-                    "source_file, is_deleted) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "source_file, is_deleted, linked_to, adjustment) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         txn.uuid,
                         txn.date.isoformat(),
@@ -156,6 +174,8 @@ class Database:
                         txn.txn_type.value,
                         txn.source_file,
                         int(txn.is_deleted),
+                        txn.linked_to,
+                        txn.adjustment,
                     ),
                 )
             return True
@@ -427,6 +447,67 @@ class Database:
 
     # -- Helpers --
 
+    # -- Offsets / Linking --
+
+    def link_transactions(self, expense_uuid: str, income_uuid: str) -> bool:
+        """Link an income transaction to an expense as an offset."""
+        with self._lock:
+            income_row = self.conn.execute(
+                "SELECT * FROM transactions WHERE uuid = ? AND is_deleted = 0",
+                (income_uuid,),
+            ).fetchone()
+            expense_row = self.conn.execute(
+                "SELECT * FROM transactions WHERE uuid = ? AND is_deleted = 0",
+                (expense_uuid,),
+            ).fetchone()
+        if not income_row or not expense_row:
+            return False
+        offset_amount = income_row["amount"]
+        with self.conn:
+            self.conn.execute(
+                "UPDATE transactions SET adjustment = adjustment + ?, linked_to = ? "
+                "WHERE uuid = ?",
+                (offset_amount, income_uuid, expense_uuid),
+            )
+            self.conn.execute(
+                "UPDATE transactions SET linked_to = ?, is_deleted = 1 "
+                "WHERE uuid = ?",
+                (expense_uuid, income_uuid),
+            )
+        return True
+
+    def unlink_transactions(self, expense_uuid: str) -> bool:
+        """Remove offset link from an expense, restore the income transaction."""
+        with self._lock:
+            expense_row = self.conn.execute(
+                "SELECT * FROM transactions WHERE uuid = ?",
+                (expense_uuid,),
+            ).fetchone()
+        if not expense_row or not expense_row["linked_to"]:
+            return False
+        income_uuid = expense_row["linked_to"]
+        with self._lock:
+            income_row = self.conn.execute(
+                "SELECT * FROM transactions WHERE uuid = ?",
+                (income_uuid,),
+            ).fetchone()
+        if not income_row:
+            return False
+        with self.conn:
+            self.conn.execute(
+                "UPDATE transactions SET adjustment = adjustment - ?, linked_to = '' "
+                "WHERE uuid = ?",
+                (income_row["amount"], expense_uuid),
+            )
+            self.conn.execute(
+                "UPDATE transactions SET linked_to = '', is_deleted = 0 "
+                "WHERE uuid = ?",
+                (income_uuid,),
+            )
+        return True
+
+    # -- Helpers --
+
     @staticmethod
     def _row_to_txn(row: sqlite3.Row) -> Transaction:
         return Transaction(
@@ -441,6 +522,8 @@ class Database:
             source_file=row["source_file"] or "",
             uuid=row["uuid"],
             is_deleted=bool(row["is_deleted"]),
+            linked_to=row["linked_to"] or "",
+            adjustment=row["adjustment"] or 0.0,
         )
 
     @staticmethod

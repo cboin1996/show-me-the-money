@@ -315,6 +315,67 @@ class TestSQLiteDB:
         assert stats["categorized"] == 1
         assert stats["classification_rate"] == 50.0
 
+    def test_link_transactions(self, sqlite_db):
+        expense = Transaction(
+            date=date(2026, 3, 1),
+            amount=100.0,
+            store_raw="restaurant",
+            txn_type=TxnType.EXPENSE,
+            source_file="test.csv",
+        )
+        income = Transaction(
+            date=date(2026, 3, 2),
+            amount=50.0,
+            store_raw="friend etransfer",
+            txn_type=TxnType.INCOME,
+            source_file="test.csv",
+        )
+        sqlite_db.insert_transaction(expense)
+        sqlite_db.insert_transaction(income)
+
+        assert sqlite_db.link_transactions(expense.uuid, income.uuid)
+
+        txns = sqlite_db.get_all_transactions()
+        exp_txn = [t for t in txns if t.uuid == expense.uuid][0]
+        assert exp_txn.adjustment == 50.0
+        assert exp_txn.linked_to == income.uuid
+        assert exp_txn.effective_amount == 50.0
+
+        # Income should be soft-deleted
+        all_txns = sqlite_db.get_all_transactions(include_deleted=True)
+        inc_txn = [t for t in all_txns if t.uuid == income.uuid][0]
+        assert inc_txn.is_deleted
+        assert inc_txn.linked_to == expense.uuid
+
+    def test_unlink_transactions(self, sqlite_db):
+        expense = Transaction(
+            date=date(2026, 4, 1),
+            amount=200.0,
+            store_raw="store",
+            txn_type=TxnType.EXPENSE,
+            source_file="test.csv",
+        )
+        income = Transaction(
+            date=date(2026, 4, 2),
+            amount=75.0,
+            store_raw="refund",
+            txn_type=TxnType.INCOME,
+            source_file="test.csv",
+        )
+        sqlite_db.insert_transaction(expense)
+        sqlite_db.insert_transaction(income)
+        sqlite_db.link_transactions(expense.uuid, income.uuid)
+
+        assert sqlite_db.unlink_transactions(expense.uuid)
+
+        txns = sqlite_db.get_all_transactions()
+        exp_txn = [t for t in txns if t.uuid == expense.uuid][0]
+        assert exp_txn.adjustment == 0.0
+        assert exp_txn.linked_to == ""
+        # Income restored
+        inc_txn = [t for t in txns if t.uuid == income.uuid][0]
+        assert not inc_txn.is_deleted
+
 
 # --- Adapter tests ---
 
@@ -1082,6 +1143,53 @@ class TestServer:
         body = resp.read()
         assert body[:4] == b"%PDF"
         assert len(body) > 1000
+
+    def test_api_link_unlink(self, server_fixture):
+        url = server_fixture["base_url"]
+        db = server_fixture["db"]
+        # Get an expense and income uuid
+        expenses = db.get_expenses()
+        income = db.get_income()
+        exp_uuid = expenses[0].uuid
+        inc_uuid = income[0].uuid
+        inc_amount = income[0].amount
+        # Link
+        data = json.dumps({"expense_uuid": exp_uuid, "income_uuid": inc_uuid}).encode()
+        req = urllib.request.Request(
+            f"{url}/api/link",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        resp = urllib.request.urlopen(req)
+        result = json.loads(resp.read())
+        assert result["ok"]
+        # Verify expense has adjustment
+        txn = [t for t in db.get_all_transactions() if t.uuid == exp_uuid][0]
+        assert txn.adjustment == inc_amount
+        assert txn.linked_to == inc_uuid
+        # Verify income is soft-deleted
+        inc_txn = [
+            t
+            for t in db.get_all_transactions(include_deleted=True)
+            if t.uuid == inc_uuid
+        ][0]
+        assert inc_txn.is_deleted
+        # Unlink
+        data = json.dumps({"expense_uuid": exp_uuid}).encode()
+        req = urllib.request.Request(
+            f"{url}/api/unlink",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        resp = urllib.request.urlopen(req)
+        result = json.loads(resp.read())
+        assert result["ok"]
+        # Verify restored
+        txn = [t for t in db.get_all_transactions() if t.uuid == exp_uuid][0]
+        assert txn.adjustment == 0
+        assert txn.linked_to == ""
 
     def test_404(self, server_fixture):
         url = server_fixture["base_url"]

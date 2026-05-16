@@ -123,8 +123,8 @@ def compute_analytics(transactions: list[Transaction], budgets: list[dict]) -> d
     monthly_income: dict[str, float] = defaultdict(float)
     for t in expenses:
         cat = t.category or "Uncategorized"
-        monthly_cat[t.month][cat] += t.amount
-        monthly_totals[t.month] += t.amount
+        monthly_cat[t.month][cat] += t.effective_amount
+        monthly_totals[t.month] += t.effective_amount
     for t in income:
         monthly_income[t.month] += t.amount
 
@@ -236,7 +236,7 @@ def compute_analytics(transactions: list[Transaction], budgets: list[dict]) -> d
     dow_counts: dict[int, int] = defaultdict(int)
     for t in expenses:
         dow = t.date.weekday()
-        dow_totals[dow] += t.amount
+        dow_totals[dow] += t.effective_amount
         dow_counts[dow] += 1
     dow_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     day_of_week = [
@@ -259,7 +259,7 @@ def compute_analytics(transactions: list[Transaction], budgets: list[dict]) -> d
     for t in expenses:
         key = t.store_normalized or t.store_raw
         store_freq[key] += 1
-        store_spend[key] += t.amount
+        store_spend[key] += t.effective_amount
     top_merchants = [
         {
             "store": store,
@@ -272,10 +272,10 @@ def compute_analytics(transactions: list[Transaction], budgets: list[dict]) -> d
 
     # --- Category concentration ---
     cat_totals: dict[str, float] = defaultdict(float)
-    total_spend = sum(t.amount for t in expenses)
+    total_spend = sum(t.effective_amount for t in expenses)
     for t in expenses:
         cat = t.category or "Uncategorized"
-        cat_totals[cat] += t.amount
+        cat_totals[cat] += t.effective_amount
     sorted_cats = sorted(cat_totals.items(), key=lambda x: -x[1])
     top3_spend = sum(v for _, v in sorted_cats[:3])
     concentration = {
@@ -541,6 +541,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._json_response({"ok": True})
             else:
                 self._error(404, "Transaction not found")
+        elif path == "/api/link":
+            data = self._read_json_body()
+            expense_uuid = data.get("expense_uuid", "")
+            income_uuid = data.get("income_uuid", "")
+            if not expense_uuid or not income_uuid:
+                self._error(400, "expense_uuid and income_uuid required")
+                return
+            if self.db.link_transactions(expense_uuid, income_uuid):
+                self._json_response({"ok": True})
+            else:
+                self._error(404, "Transactions not found")
+        elif path == "/api/unlink":
+            data = self._read_json_body()
+            expense_uuid = data.get("expense_uuid", "")
+            if not expense_uuid:
+                self._error(400, "expense_uuid required")
+                return
+            if self.db.unlink_transactions(expense_uuid):
+                self._json_response({"ok": True})
+            else:
+                self._error(404, "Transaction not found or not linked")
         else:
             self._error(404, "Not found")
 
@@ -576,30 +597,37 @@ class Handler(BaseHTTPRequestHandler):
             self._error(404, "Not found")
 
     def _handle_pdf_download(self):
-        from .pdf_report import generate_pdf
+        from .pdf_render import render_dashboard_pdf
 
-        txns = self.db.get_all_transactions()
-        stats = self.db.get_stats()
-        budgets = self.db.get_budgets()
-        analytics = compute_analytics(txns, budgets)
-
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-            tmp_path = Path(f.name)
+        port = self.server.server_address[1]
+        base_url = f"http://127.0.0.1:{port}"
 
         try:
-            generate_pdf(txns, stats, budgets, analytics, tmp_path)
-            pdf_bytes = tmp_path.read_bytes()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/pdf")
-            self.send_header("Content-Length", str(len(pdf_bytes)))
-            self.send_header(
-                "Content-Disposition", "attachment; filename=financial_report.pdf"
-            )
-            self.end_headers()
-            self.wfile.write(pdf_bytes)
-        finally:
-            if tmp_path.exists():
-                tmp_path.unlink()
+            pdf_bytes = render_dashboard_pdf(base_url)
+        except Exception:
+            from .pdf_report import generate_pdf
+
+            txns = self.db.get_all_transactions()
+            stats = self.db.get_stats()
+            budgets = self.db.get_budgets()
+            analytics = compute_analytics(txns, budgets)
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+                tmp_path = Path(f.name)
+            try:
+                generate_pdf(txns, stats, budgets, analytics, tmp_path)
+                pdf_bytes = tmp_path.read_bytes()
+            finally:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Length", str(len(pdf_bytes)))
+        self.send_header(
+            "Content-Disposition", "attachment; filename=financial_report.pdf"
+        )
+        self.end_headers()
+        self.wfile.write(pdf_bytes)
 
     def _handle_import(self, preview: bool):
         try:

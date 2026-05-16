@@ -24,6 +24,8 @@ class Transaction:
     sub_description: str = ""
     uuid: str = ""
     is_deleted: bool = False
+    linked_to: str = ""
+    adjustment: float = 0.0
 
     def __post_init__(self):
         if not self.uuid:
@@ -32,6 +34,10 @@ class Transaction:
     @property
     def month(self) -> str:
         return self.date.strftime("%Y-%m")
+
+    @property
+    def effective_amount(self) -> float:
+        return self.amount - self.adjustment
 
 
 @dataclass

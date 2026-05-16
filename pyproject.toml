@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
     "pandas>=2.0",
     "fpdf2>=2.7",
+    "playwright",
 ]
 
 [project.optional-dependencies]
@@ -18,7 +19,6 @@ dev = [
     "isort",
     "pytest>=7.0",
     "pytest-cov",
-    "playwright",
     "pytest-playwright",
 ]
 
