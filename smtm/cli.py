@@ -136,6 +136,89 @@ def cmd_profile(args):
               f"({min(file_dates)} to {max(file_dates)})")
 
 
+def cmd_suggest(args):
+    """Suggest categories for unclassified merchants and optionally
+    apply them to the database."""
+    db = database.load_db(args.db_dir)
+    csv_dir = Path(args.csv_dir)
+
+    txns = parsers.parse_directory(csv_dir)
+    expenses = [t for t in txns if t.txn_type == TxnType.EXPENSE]
+    _, unclassified = categorizer.categorize_batch(expenses, db)
+
+    if not unclassified:
+        print("No unclassified transactions. You're at 100%!")
+        return
+
+    # Keyword-based suggestions
+    keyword_map = {
+        "Dining": ["restaurant", "cafe", "coffee", "pizza", "sushi",
+                   "burger", "grill", "kitchen", "bakery", "pub",
+                   "bar", "brew", "tap", "lounge", "wine", "beer",
+                   "pho", "taco", "noodle", "ramen", "wok", "diner",
+                   "eatery", "bistro", "food", "eat"],
+        "Groceries": ["market", "grocery", "iga", "safeway", "save-on",
+                      "superstore", "no frills", "costco", "bulk barn",
+                      "fresh", "farm", "organic"],
+        "Transportation": ["gas", "petro", "esso", "shell", "chevron",
+                           "parking", "transit", "compass", "uber",
+                           "lyft", "taxi", "cab", "auto", "car wash"],
+        "Travel": ["airline", "air ", "hotel", "hostel", "motel",
+                   "resort", "airbnb", "vrbo", "ferry", "bcf",
+                   "rental", "hertz", "avis", "expedia", "booking"],
+        "Entertainment": ["ski", "snowboard", "mountain", "cinema",
+                          "theatre", "theater", "concert", "ticket",
+                          "game", "steam", "playstation", "xbox",
+                          "museum", "gallery", "park"],
+        "Shopping": ["sport", "athletic", "shoe", "cloth", "wear",
+                     "fashion", "store", "shop", "mart", "hardware",
+                     "electronics", "tech"],
+        "Health": ["pharmacy", "drug", "medical", "dental", "clinic",
+                   "physio", "chiro", "optical", "vision", "wellness",
+                   "barber", "hair", "salon", "spa"],
+    }
+
+    from collections import Counter
+    store_amounts = {}
+    store_counts = Counter()
+    for t in unclassified:
+        key = t.store_normalized or t.store_raw
+        store_amounts[key] = store_amounts.get(key, 0) + t.amount
+        store_counts[key] += 1
+
+    suggestions = {}
+    for store in store_amounts:
+        for category, keywords in keyword_map.items():
+            if any(kw in store for kw in keywords):
+                suggestions[store] = category
+                break
+
+    if not suggestions:
+        print("No suggestions available. Use interactive mode "
+              "(`smtm import`) to classify manually.")
+        return
+
+    print(f"Suggested categories for {len(suggestions)} merchants:\n")
+    sorted_sugg = sorted(suggestions.items(),
+                         key=lambda x: -store_amounts[x[0]])
+    for store, cat in sorted_sugg:
+        amt = store_amounts[store]
+        cnt = store_counts[store]
+        print(f"  {cat:<16} ${amt:>7,.2f} ({cnt}x)  {store}")
+
+    total_suggested = sum(store_amounts[s] for s in suggestions)
+    print(f"\n  Would classify: ${total_suggested:,.0f} more")
+
+    if args.apply:
+        for store, cat in suggestions.items():
+            db.store_to_category[store] = [cat]
+        database.save_db(db, args.db_dir)
+        print(f"\n  Applied {len(suggestions)} new mappings to DB.")
+        print(f"  Re-run `smtm import --batch` to regenerate reports.")
+    else:
+        print(f"\n  To apply: smtm suggest --apply")
+
+
 def _interactive_classify(unclassified, db, classified):
     """Prompt user to classify unknown merchants."""
     print(f"\n{len(unclassified)} unclassified transactions:")
@@ -204,12 +287,20 @@ def main():
     # profile command
     sub.add_parser("profile", help="Preview data without importing")
 
+    # suggest command
+    sug = sub.add_parser("suggest",
+                         help="Suggest categories for unknowns")
+    sug.add_argument("--apply", action="store_true",
+                     help="Apply suggestions to the database")
+
     args = parser.parse_args()
 
     if args.command == "import":
         cmd_import(args)
     elif args.command == "profile":
         cmd_profile(args)
+    elif args.command == "suggest":
+        cmd_suggest(args)
     else:
         # Default: run import in batch mode for backwards compat
         args.batch = True
