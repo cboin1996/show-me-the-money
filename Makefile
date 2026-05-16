@@ -13,11 +13,13 @@ upgrade:
 lint:
 	uv run black $(APP_NAME) tests
 	uv run isort $(APP_NAME) tests
+	npx prettier --write "**/*.md"
 
 .PHONY: lint-check
 lint-check:
 	uv run black --check $(APP_NAME) tests
 	uv run isort --check $(APP_NAME) tests
+	npx prettier --check "**/*.md"
 
 .PHONY: test
 test:
