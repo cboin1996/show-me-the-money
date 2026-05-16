@@ -1,9 +1,11 @@
 """Local HTTP server for the interactive dashboard."""
 
 import json
+import math
 import tempfile
 import threading
 from collections import Counter, defaultdict
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -104,6 +106,234 @@ def compute_suggestions(db: Database) -> list[dict]:
 
     suggestions.sort(key=lambda s: -s["amount"])
     return suggestions
+
+
+def compute_analytics(transactions: list[Transaction], budgets: list[dict]) -> dict:
+    """Compute all advanced analytics in one pass."""
+    expenses = [
+        t for t in transactions if t.txn_type == TxnType.EXPENSE and not t.is_deleted
+    ]
+    income = [
+        t for t in transactions if t.txn_type == TxnType.INCOME and not t.is_deleted
+    ]
+
+    # --- Month-over-month deltas ---
+    monthly_cat: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    monthly_totals: dict[str, float] = defaultdict(float)
+    monthly_income: dict[str, float] = defaultdict(float)
+    for t in expenses:
+        cat = t.category or "Uncategorized"
+        monthly_cat[t.month][cat] += t.amount
+        monthly_totals[t.month] += t.amount
+    for t in income:
+        monthly_income[t.month] += t.amount
+
+    months = sorted(monthly_totals.keys())
+    mom_deltas = []
+    if len(months) >= 2:
+        curr_month = months[-1]
+        prev_month = months[-2]
+        all_cats = set(monthly_cat[curr_month].keys()) | set(
+            monthly_cat[prev_month].keys()
+        )
+        for cat in sorted(all_cats):
+            curr = monthly_cat[curr_month].get(cat, 0)
+            prev = monthly_cat[prev_month].get(cat, 0)
+            if prev > 0:
+                pct_change = round((curr - prev) / prev * 100, 1)
+            elif curr > 0:
+                pct_change = 100.0
+            else:
+                pct_change = 0.0
+            mom_deltas.append(
+                {
+                    "category": cat,
+                    "current": round(curr, 2),
+                    "previous": round(prev, 2),
+                    "change_pct": pct_change,
+                    "current_month": curr_month,
+                    "previous_month": prev_month,
+                }
+            )
+        mom_deltas.sort(key=lambda d: -abs(d["change_pct"]))
+
+    # --- Savings rate trend ---
+    savings_rate = []
+    for m in months:
+        exp = monthly_totals.get(m, 0)
+        inc = monthly_income.get(m, 0)
+        rate = round((inc - exp) / inc * 100, 1) if inc > 0 else 0.0
+        savings_rate.append(
+            {
+                "month": m,
+                "rate": rate,
+                "income": round(inc, 2),
+                "expenses": round(exp, 2),
+            }
+        )
+
+    # --- Spending velocity (current month pace) ---
+    today = date.today()
+    curr_month_key = today.strftime("%Y-%m")
+    days_elapsed = today.day
+    if today.month == 12:
+        days_in_month = 31
+    else:
+        days_in_month = (date(today.year, today.month + 1, 1) - timedelta(days=1)).day
+    curr_spent = monthly_totals.get(curr_month_key, 0)
+    daily_rate = curr_spent / days_elapsed if days_elapsed > 0 else 0
+    projected = round(daily_rate * days_in_month, 2)
+    velocity = {
+        "month": curr_month_key,
+        "days_elapsed": days_elapsed,
+        "days_in_month": days_in_month,
+        "spent_so_far": round(curr_spent, 2),
+        "daily_rate": round(daily_rate, 2),
+        "projected_total": projected,
+        "prev_month_total": (
+            round(monthly_totals.get(months[-2], 0), 2) if len(months) >= 2 else 0
+        ),
+    }
+
+    # --- Recurring charge detection ---
+    store_dates: dict[str, list[tuple[date, float]]] = defaultdict(list)
+    for t in expenses:
+        key = t.store_normalized or t.store_raw
+        store_dates[key].append((t.date, t.amount))
+
+    recurring = []
+    for store, entries in store_dates.items():
+        if len(entries) < 2:
+            continue
+        entries.sort(key=lambda x: x[0])
+        amounts = [e[1] for e in entries]
+        avg_amt = sum(amounts) / len(amounts)
+        amt_variance = sum((a - avg_amt) ** 2 for a in amounts) / len(amounts)
+        amt_std = math.sqrt(amt_variance)
+        # Low amount variance suggests recurring (subscription-like)
+        if avg_amt > 0 and amt_std / avg_amt < 0.15 and len(entries) >= 2:
+            gaps = [
+                (entries[i + 1][0] - entries[i][0]).days
+                for i in range(len(entries) - 1)
+            ]
+            avg_gap = sum(gaps) / len(gaps) if gaps else 0
+            # Monthly-ish cadence (20-40 days)
+            if 20 <= avg_gap <= 40:
+                recurring.append(
+                    {
+                        "store": store,
+                        "avg_amount": round(avg_amt, 2),
+                        "occurrences": len(entries),
+                        "avg_gap_days": round(avg_gap, 1),
+                        "annual_cost": round(avg_amt * 12, 2),
+                        "last_date": entries[-1][0].isoformat(),
+                    }
+                )
+    recurring.sort(key=lambda r: -r["annual_cost"])
+
+    # --- Day-of-week spending pattern ---
+    dow_totals: dict[int, float] = defaultdict(float)
+    dow_counts: dict[int, int] = defaultdict(int)
+    for t in expenses:
+        dow = t.date.weekday()
+        dow_totals[dow] += t.amount
+        dow_counts[dow] += 1
+    dow_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    day_of_week = [
+        {
+            "day": dow_names[i],
+            "total": round(dow_totals.get(i, 0), 2),
+            "count": dow_counts.get(i, 0),
+            "avg": (
+                round(dow_totals.get(i, 0) / dow_counts[i], 2)
+                if dow_counts.get(i, 0) > 0
+                else 0
+            ),
+        }
+        for i in range(7)
+    ]
+
+    # --- Top merchants by frequency ---
+    store_freq: Counter = Counter()
+    store_spend: dict[str, float] = defaultdict(float)
+    for t in expenses:
+        key = t.store_normalized or t.store_raw
+        store_freq[key] += 1
+        store_spend[key] += t.amount
+    top_merchants = [
+        {
+            "store": store,
+            "visits": count,
+            "total_spend": round(store_spend[store], 2),
+            "avg_per_visit": round(store_spend[store] / count, 2),
+        }
+        for store, count in store_freq.most_common(20)
+    ]
+
+    # --- Category concentration ---
+    cat_totals: dict[str, float] = defaultdict(float)
+    total_spend = sum(t.amount for t in expenses)
+    for t in expenses:
+        cat = t.category or "Uncategorized"
+        cat_totals[cat] += t.amount
+    sorted_cats = sorted(cat_totals.items(), key=lambda x: -x[1])
+    top3_spend = sum(v for _, v in sorted_cats[:3])
+    concentration = {
+        "top3_pct": round(top3_spend / total_spend * 100, 1) if total_spend else 0,
+        "top3_categories": [
+            {
+                "category": c,
+                "amount": round(v, 2),
+                "pct": round(v / total_spend * 100, 1),
+            }
+            for c, v in sorted_cats[:3]
+        ],
+        "total_categories": len(sorted_cats),
+    }
+
+    # --- Z-score outliers (for categories with 10+ txns) ---
+    zscore_outliers = []
+    cat_amounts: dict[str, list[tuple[Transaction, float]]] = defaultdict(list)
+    for t in expenses:
+        cat = t.category or "Uncategorized"
+        cat_amounts[cat].append((t, t.amount))
+    for cat, entries in cat_amounts.items():
+        if len(entries) < 10:
+            continue
+        amounts = [a for _, a in entries]
+        mean = sum(amounts) / len(amounts)
+        variance = sum((a - mean) ** 2 for a in amounts) / len(amounts)
+        std = math.sqrt(variance)
+        if std == 0:
+            continue
+        for t, amt in entries:
+            z = (amt - mean) / std
+            if z >= 2.0:
+                zscore_outliers.append(
+                    {
+                        "uuid": t.uuid,
+                        "date": t.date.isoformat(),
+                        "store": t.store_normalized or t.store_raw,
+                        "amount": round(amt, 2),
+                        "category": cat,
+                        "z_score": round(z, 2),
+                        "category_mean": round(mean, 2),
+                        "category_std": round(std, 2),
+                    }
+                )
+    zscore_outliers.sort(key=lambda o: -o["z_score"])
+    zscore_outliers = zscore_outliers[:30]
+
+    return {
+        "mom_deltas": mom_deltas,
+        "savings_rate": savings_rate,
+        "velocity": velocity,
+        "recurring": recurring,
+        "day_of_week": day_of_week,
+        "top_merchants": top_merchants,
+        "concentration": concentration,
+        "zscore_outliers": zscore_outliers,
+    }
 
 
 def _parse_multipart(content_type: str, body: bytes) -> tuple[str, bytes]:
@@ -235,6 +465,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/categories":
             cat_db = self.db.load_category_db()
             self._json_response({"categories": cat_db.categories})
+        elif path == "/api/analytics":
+            txns = self.db.get_all_transactions()
+            budgets = self.db.get_budgets()
+            self._json_response({"analytics": compute_analytics(txns, budgets)})
         else:
             self._error(404, "Not found")
 

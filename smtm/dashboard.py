@@ -573,6 +573,7 @@ tr:hover { background: #1e293b; }
 
 <div class="tab-bar" id="mainTabs">
     <div class="tab active" data-tab="overview">Overview</div>
+    <div class="tab" data-tab="analytics">Analytics</div>
     <div class="tab" data-tab="import">Import</div>
     <div class="tab" data-tab="categorize">Categorize</div>
     <div class="tab" data-tab="budgets">Budgets</div>
@@ -592,6 +593,33 @@ tr:hover { background: #1e293b; }
     <div id="anomaliesSection" class="section hidden">
         <h2>Anomalies <span style="font-size:12px;color:#fbbf24">(transactions &gt; 2x category average)</span></h2>
         <div id="anomaliesList"></div>
+    </div>
+</div>
+
+<!-- ANALYTICS TAB -->
+<div id="tab-analytics" class="hidden">
+    <div class="cards" id="velocityCards"></div>
+    <div class="charts">
+        <div class="chart-box"><h2>Savings Rate Trend</h2><canvas id="savingsRateChart"></canvas></div>
+        <div class="chart-box"><h2>Day-of-Week Spending</h2><canvas id="dowChart"></canvas></div>
+    </div>
+    <div class="trend-row">
+        <div class="chart-box"><h2>Category Concentration</h2><canvas id="concentrationChart"></canvas></div>
+        <div class="chart-box"><h2>Top Merchants by Visits</h2><canvas id="merchantsChart"></canvas></div>
+    </div>
+    <div id="momSection" class="section">
+        <h2>Month-over-Month Changes</h2>
+        <p class="subtitle" id="momSubtitle"></p>
+        <div class="scroll-table"><table><thead><tr><th>Category</th><th>Previous</th><th>Current</th><th>Change</th></tr></thead><tbody id="momBody"></tbody></table></div>
+    </div>
+    <div id="recurringSection" class="section">
+        <h2>Detected Recurring Charges</h2>
+        <p class="subtitle">Subscriptions and regular payments (similar amount, monthly cadence)</p>
+        <div class="scroll-table"><table><thead><tr><th>Store</th><th>Amount</th><th>Frequency</th><th>Annual Cost</th><th>Last Seen</th></tr></thead><tbody id="recurringBody"></tbody></table></div>
+    </div>
+    <div id="zscoreSection" class="section">
+        <h2>Statistical Outliers <span style="font-size:12px;color:#fbbf24">(z-score &ge; 2.0, min 10 txns in category)</span></h2>
+        <div class="scroll-table"><table><thead><tr><th>Date</th><th>Store</th><th>Amount</th><th>Category</th><th>Z-Score</th><th>Cat Mean &plusmn; Std</th></tr></thead><tbody id="zscoreBody"></tbody></table></div>
     </div>
 </div>
 
@@ -726,15 +754,15 @@ async function apiPost(path, data) {
 
 // --- App State ---
 const App = {
-    data: { transactions: [], summary: {}, budgets: [], rules: [], storePairs: {}, history: [], anomalies: [], uncategorized: [], suggestions: [], deleted: [] },
+    data: { transactions: [], summary: {}, budgets: [], rules: [], storePairs: {}, history: [], anomalies: [], uncategorized: [], suggestions: [], deleted: [], analytics: {} },
     charts: {},
 
     async init() {
-        const [txns, summary, budgets, rules, pairs, history, anomalies, uncat, suggest, deleted] = await Promise.all([
+        const [txns, summary, budgets, rules, pairs, history, anomalies, uncat, suggest, deleted, analytics] = await Promise.all([
             api('/api/transactions'), api('/api/summary'), api('/api/budgets'),
             api('/api/rules'), api('/api/store-pairs'), api('/api/history'),
             api('/api/anomalies'), api('/api/uncategorized'), api('/api/suggest'),
-            api('/api/transactions/deleted'),
+            api('/api/transactions/deleted'), api('/api/analytics'),
         ]);
         this.data.transactions = txns.transactions || [];
         this.data.summary = summary.summary || {};
@@ -746,6 +774,7 @@ const App = {
         this.data.uncategorized = uncat.merchants || [];
         this.data.suggestions = suggest.suggestions || [];
         this.data.deleted = deleted.transactions || [];
+        this.data.analytics = analytics.analytics || {};
         this.renderAll();
     },
 
@@ -756,6 +785,7 @@ const App = {
         this.renderCards();
         this.renderCharts();
         this.renderAnomalies();
+        this.renderAnalytics();
         this.renderUncategorized();
         this.renderSuggestions();
         this.renderBudgets();
@@ -837,6 +867,116 @@ const App = {
                 <div><strong>${a.store}</strong> · ${a.date} · ${catBadge(a.category)}<br><span style="color:#94a3b8;font-size:12px">Avg: $${a.category_avg.toLocaleString()}</span></div>
                 <div style="text-align:right"><div class="mult">${a.multiplier}x</div><div style="color:#f87171;font-weight:700">$${a.amount.toLocaleString()}</div></div>
             </div>
+        `).join('');
+    },
+
+    renderAnalytics() {
+        const a = this.data.analytics;
+        if (!a || !a.velocity) return;
+
+        // Velocity cards
+        const v = a.velocity;
+        const paceClass = v.projected_total > v.prev_month_total ? 'red' : 'green';
+        document.getElementById('velocityCards').innerHTML = `
+            <div class="card"><div class="label">Spent This Month</div><div class="value red">$${v.spent_so_far.toLocaleString()}</div></div>
+            <div class="card"><div class="label">Daily Rate</div><div class="value blue">$${v.daily_rate.toLocaleString()}/day</div></div>
+            <div class="card"><div class="label">Projected Total</div><div class="value ${paceClass}">$${v.projected_total.toLocaleString()}</div></div>
+            <div class="card"><div class="label">Last Month</div><div class="value purple">$${v.prev_month_total.toLocaleString()}</div></div>
+            <div class="card"><div class="label">Day ${v.days_elapsed} of ${v.days_in_month}</div><div class="value blue">${Math.round(v.days_elapsed/v.days_in_month*100)}%</div></div>
+        `;
+
+        // Savings rate chart
+        if (this.charts.savingsRate) this.charts.savingsRate.destroy();
+        const sr = a.savings_rate || [];
+        this.charts.savingsRate = new Chart(document.getElementById('savingsRateChart'), {
+            type: 'line',
+            data: { labels: sr.map(s=>s.month), datasets: [{
+                label: 'Savings Rate %', data: sr.map(s=>s.rate),
+                borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,0.1)',
+                fill: true, tension: 0.3, pointRadius: 5
+            }]},
+            options: { responsive: true, plugins: { legend: { display: false } },
+                scales: { y: { ticks: { callback: v => v + '%' }, suggestedMin: -50, suggestedMax: 100 } } }
+        });
+
+        // Day-of-week chart
+        if (this.charts.dow) this.charts.dow.destroy();
+        const dow = a.day_of_week || [];
+        const dowColors = dow.map((d,i) => i >= 5 ? '#f87171' : '#3b82f6');
+        this.charts.dow = new Chart(document.getElementById('dowChart'), {
+            type: 'bar',
+            data: { labels: dow.map(d=>d.day), datasets: [{
+                label: 'Avg Spend', data: dow.map(d=>d.avg),
+                backgroundColor: dowColors, borderWidth: 0
+            }]},
+            options: { responsive: true, plugins: { legend: { display: false } },
+                scales: { y: { ticks: { callback: v => '$' + v } } } }
+        });
+
+        // Concentration donut
+        if (this.charts.concentration) this.charts.concentration.destroy();
+        const conc = a.concentration || {};
+        const top3 = conc.top3_categories || [];
+        const otherPct = 100 - (conc.top3_pct || 0);
+        this.charts.concentration = new Chart(document.getElementById('concentrationChart'), {
+            type: 'doughnut',
+            data: { labels: [...top3.map(c=>c.category + ' (' + c.pct + '%)'), 'Others (' + otherPct.toFixed(1) + '%)'],
+                datasets: [{ data: [...top3.map(c=>c.pct), otherPct],
+                    backgroundColor: [...top3.map((c,i)=>getColor(c.category,i)), '#475569'], borderWidth: 0 }]},
+            options: { responsive: true, cutout: '55%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
+        });
+
+        // Top merchants bar
+        if (this.charts.merchants) this.charts.merchants.destroy();
+        const tm = (a.top_merchants || []).slice(0, 10);
+        this.charts.merchants = new Chart(document.getElementById('merchantsChart'), {
+            type: 'bar',
+            data: { labels: tm.map(m=>m.store.substring(0,20)), datasets: [{
+                label: 'Visits', data: tm.map(m=>m.visits),
+                backgroundColor: '#8b5cf6', borderWidth: 0
+            }]},
+            options: { responsive: true, indexAxis: 'y', plugins: { legend: { display: false } } }
+        });
+
+        // MoM table
+        const mom = a.mom_deltas || [];
+        if (mom.length) {
+            document.getElementById('momSubtitle').textContent = `${mom[0].previous_month} → ${mom[0].current_month}`;
+            document.getElementById('momBody').innerHTML = mom.map(d => {
+                const arrow = d.change_pct > 0 ? '↑' : d.change_pct < 0 ? '↓' : '→';
+                const cls = d.change_pct > 20 ? 'red' : d.change_pct < -20 ? 'green' : '';
+                return `<tr>
+                    <td>${catBadge(d.category)}</td>
+                    <td style="text-align:right">$${d.previous.toLocaleString()}</td>
+                    <td style="text-align:right">$${d.current.toLocaleString()}</td>
+                    <td style="text-align:right" class="${cls}"><strong>${arrow} ${d.change_pct > 0 ? '+' : ''}${d.change_pct}%</strong></td>
+                </tr>`;
+            }).join('');
+        }
+
+        // Recurring charges
+        const rec = a.recurring || [];
+        document.getElementById('recurringBody').innerHTML = rec.map(r => `
+            <tr>
+                <td><strong>${r.store}</strong></td>
+                <td style="text-align:right">$${r.avg_amount.toFixed(2)}</td>
+                <td>~${r.avg_gap_days} days (${r.occurrences} charges)</td>
+                <td style="text-align:right;color:#f87171;font-weight:700">$${r.annual_cost.toLocaleString()}</td>
+                <td>${r.last_date}</td>
+            </tr>
+        `).join('');
+
+        // Z-score outliers
+        const zs = a.zscore_outliers || [];
+        document.getElementById('zscoreBody').innerHTML = zs.map(o => `
+            <tr>
+                <td>${o.date}</td>
+                <td>${o.store}</td>
+                <td style="text-align:right;color:#f87171;font-weight:700">$${o.amount.toFixed(2)}</td>
+                <td>${catBadge(o.category)}</td>
+                <td style="text-align:right"><strong>${o.z_score}σ</strong></td>
+                <td style="color:#94a3b8">$${o.category_mean.toFixed(2)} ± $${o.category_std.toFixed(2)}</td>
+            </tr>
         `).join('');
     },
 
@@ -1031,7 +1171,7 @@ document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
-        ['overview','import','categorize','budgets','manage'].forEach(name => {
+        ['overview','analytics','import','categorize','budgets','manage'].forEach(name => {
             document.getElementById('tab-'+name).classList.toggle('hidden', name !== tab.dataset.tab);
         });
     });

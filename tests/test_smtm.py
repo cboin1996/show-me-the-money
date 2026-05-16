@@ -1058,6 +1058,22 @@ class TestServer:
         txns_after = _get(url, "/api/transactions")["transactions"]
         assert len(txns_after) > len(txns_before)
 
+    def test_api_analytics(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/analytics")
+        a = data["analytics"]
+        assert "mom_deltas" in a
+        assert "savings_rate" in a
+        assert "velocity" in a
+        assert "recurring" in a
+        assert "day_of_week" in a
+        assert "top_merchants" in a
+        assert "concentration" in a
+        assert "zscore_outliers" in a
+        assert len(a["day_of_week"]) == 7
+        assert a["velocity"]["days_in_month"] > 0
+        assert isinstance(a["concentration"]["top3_pct"], float)
+
     def test_404(self, server_fixture):
         url = server_fixture["base_url"]
         try:
@@ -1065,6 +1081,152 @@ class TestServer:
             assert False, "Should have raised"
         except urllib.error.HTTPError as e:
             assert e.code == 404
+
+
+# --- Analytics unit tests ---
+
+
+class TestAnalytics:
+    def test_recurring_detection(self):
+        from smtm.server import compute_analytics
+
+        txns = [
+            Transaction(
+                date=date(2026, 1, 15),
+                amount=12.99,
+                store_raw="netflix",
+                store_normalized="netflix",
+                category="Subscriptions",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            ),
+            Transaction(
+                date=date(2026, 2, 15),
+                amount=12.99,
+                store_raw="netflix",
+                store_normalized="netflix",
+                category="Subscriptions",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            ),
+            Transaction(
+                date=date(2026, 3, 15),
+                amount=12.99,
+                store_raw="netflix",
+                store_normalized="netflix",
+                category="Subscriptions",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            ),
+        ]
+        result = compute_analytics(txns, [])
+        recurring = result["recurring"]
+        assert len(recurring) >= 1
+        netflix = next((r for r in recurring if r["store"] == "netflix"), None)
+        assert netflix is not None
+        assert netflix["avg_amount"] == 12.99
+        assert netflix["annual_cost"] == 155.88
+
+    def test_mom_deltas(self):
+        from smtm.server import compute_analytics
+
+        txns = [
+            Transaction(
+                date=date(2026, 1, 5),
+                amount=100.0,
+                store_raw="store",
+                category="Dining",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            ),
+            Transaction(
+                date=date(2026, 2, 5),
+                amount=150.0,
+                store_raw="store",
+                category="Dining",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            ),
+        ]
+        result = compute_analytics(txns, [])
+        mom = result["mom_deltas"]
+        assert len(mom) == 1
+        assert mom[0]["category"] == "Dining"
+        assert mom[0]["change_pct"] == 50.0
+
+    def test_zscore_outliers(self):
+        from smtm.server import compute_analytics
+
+        txns = [
+            Transaction(
+                date=date(2026, 1, i),
+                amount=20.0,
+                store_raw="cafe",
+                category="Dining",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            )
+            for i in range(1, 12)
+        ] + [
+            Transaction(
+                date=date(2026, 1, 15),
+                amount=500.0,
+                store_raw="fancy place",
+                category="Dining",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            ),
+        ]
+        result = compute_analytics(txns, [])
+        outliers = result["zscore_outliers"]
+        assert len(outliers) >= 1
+        assert outliers[0]["amount"] == 500.0
+        assert outliers[0]["z_score"] > 2.0
+
+    def test_savings_rate(self):
+        from smtm.server import compute_analytics
+
+        txns = [
+            Transaction(
+                date=date(2026, 1, 5),
+                amount=1000.0,
+                store_raw="store",
+                category="Shopping",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            ),
+            Transaction(
+                date=date(2026, 1, 1),
+                amount=5000.0,
+                store_raw="employer",
+                txn_type=TxnType.INCOME,
+                source_file="a.csv",
+            ),
+        ]
+        result = compute_analytics(txns, [])
+        sr = result["savings_rate"]
+        assert len(sr) == 1
+        assert sr[0]["rate"] == 80.0
+
+    def test_day_of_week(self):
+        from smtm.server import compute_analytics
+
+        txns = [
+            Transaction(
+                date=date(2026, 1, 5),
+                amount=100.0,
+                store_raw="store",
+                category="Shopping",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            ),
+        ]
+        result = compute_analytics(txns, [])
+        dow = result["day_of_week"]
+        assert len(dow) == 7
+        monday = dow[0]
+        assert monday["day"] == "Mon"
+        assert monday["total"] == 100.0
 
 
 # --- Anomaly detection unit tests ---
