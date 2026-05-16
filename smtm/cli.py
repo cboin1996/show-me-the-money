@@ -152,124 +152,9 @@ def cmd_suggest(args):
         db.close()
         return
 
-    keyword_map = {
-        "Dining": [
-            "restaurant",
-            "cafe",
-            "coffee",
-            "pizza",
-            "sushi",
-            "burger",
-            "grill",
-            "kitchen",
-            "bakery",
-            "pub",
-            "bar",
-            "brew",
-            "pho",
-            "taco",
-            "noodle",
-            "ramen",
-            "wok",
-            "diner",
-            "eatery",
-            "bistro",
-            "food",
-            "eat",
-        ],
-        "Groceries": [
-            "market",
-            "grocery",
-            "iga",
-            "safeway",
-            "save-on",
-            "superstore",
-            "no frills",
-            "costco",
-            "bulk barn",
-            "fresh",
-            "farm",
-            "organic",
-        ],
-        "Transportation": [
-            "gas",
-            "petro",
-            "esso",
-            "shell",
-            "chevron",
-            "parking",
-            "transit",
-            "compass",
-            "uber",
-            "lyft",
-            "taxi",
-            "cab",
-            "auto",
-            "car wash",
-        ],
-        "Travel": [
-            "airline",
-            "air ",
-            "hotel",
-            "hostel",
-            "motel",
-            "resort",
-            "airbnb",
-            "vrbo",
-            "ferry",
-            "bcf",
-            "rental",
-            "hertz",
-            "avis",
-            "expedia",
-            "booking",
-        ],
-        "Entertainment": [
-            "ski",
-            "snowboard",
-            "mountain",
-            "cinema",
-            "theatre",
-            "theater",
-            "concert",
-            "ticket",
-            "game",
-            "steam",
-            "museum",
-            "gallery",
-            "park",
-        ],
-        "Shopping": [
-            "sport",
-            "athletic",
-            "shoe",
-            "cloth",
-            "wear",
-            "fashion",
-            "store",
-            "shop",
-            "mart",
-            "hardware",
-            "electronics",
-            "tech",
-        ],
-        "Health": [
-            "pharmacy",
-            "drug",
-            "medical",
-            "dental",
-            "clinic",
-            "physio",
-            "chiro",
-            "optical",
-            "vision",
-            "wellness",
-            "barber",
-            "hair",
-            "salon",
-            "spa",
-        ],
-    }
+    from .categorizer import KEYWORD_SUGGESTIONS
+
+    keyword_map = KEYWORD_SUGGESTIONS
 
     from collections import Counter
 
@@ -409,6 +294,17 @@ def cmd_delete(args):
     db.close()
 
 
+def cmd_serve(args):
+    from .server import run_server
+
+    run_server(
+        db_path=args.db_path,
+        host=args.host,
+        port=args.port,
+        csv_dir=args.csv_dir,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="smtm",
@@ -476,6 +372,11 @@ def main():
     dlt = sub.add_parser("delete", help="Soft-delete transactions")
     dlt.add_argument("uuids", nargs="+", help="Transaction UUIDs")
 
+    # serve
+    srv = sub.add_parser("serve", help="Start interactive web dashboard")
+    srv.add_argument("--host", default="127.0.0.1", help="Bind address")
+    srv.add_argument("--port", type=int, default=8000, help="Port number")
+
     args = parser.parse_args()
 
     commands = {
@@ -486,6 +387,7 @@ def main():
         "budget": cmd_budget,
         "history": cmd_history,
         "delete": cmd_delete,
+        "serve": cmd_serve,
     }
 
     handler = commands.get(args.command)

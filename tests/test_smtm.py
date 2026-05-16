@@ -740,3 +740,437 @@ class TestEndToEnd:
         unclassified_ids = set(id(t) for t in unclassified)
         assert classified_ids.isdisjoint(unclassified_ids)
         assert len(classified) + len(unclassified) == len(expenses)
+
+
+# --- Server API tests ---
+
+
+import threading
+import time
+import urllib.error
+import urllib.request
+from http.server import ThreadingHTTPServer
+
+from smtm.server import Handler, compute_anomalies, compute_uncategorized
+
+
+@pytest.fixture(scope="class")
+def server_fixture(tmp_path_factory):
+    """Start a test server with sample data."""
+    tmp = tmp_path_factory.mktemp("server")
+    db = Database(tmp / "test.db")
+    db.initialize()
+
+    # Seed transactions
+    txns = [
+        Transaction(
+            date=date(2026, 1, 5),
+            amount=25.50,
+            store_raw="uber eats",
+            category="Dining",
+            confidence="exact",
+            txn_type=TxnType.EXPENSE,
+            source_file="test.csv",
+            store_normalized="uber eats",
+        ),
+        Transaction(
+            date=date(2026, 1, 10),
+            amount=50.00,
+            store_raw="walmart",
+            category="Groceries",
+            confidence="exact",
+            txn_type=TxnType.EXPENSE,
+            source_file="test.csv",
+            store_normalized="walmart",
+        ),
+        Transaction(
+            date=date(2026, 1, 15),
+            amount=5000.00,
+            store_raw="payroll",
+            txn_type=TxnType.INCOME,
+            source_file="test.csv",
+            store_normalized="payroll",
+        ),
+        Transaction(
+            date=date(2026, 1, 20),
+            amount=15.00,
+            store_raw="unknown shop",
+            txn_type=TxnType.EXPENSE,
+            source_file="test.csv",
+            store_normalized="unknown shop",
+        ),
+        Transaction(
+            date=date(2026, 1, 22),
+            amount=12.00,
+            store_raw="uber eats",
+            category="Dining",
+            confidence="exact",
+            txn_type=TxnType.EXPENSE,
+            source_file="test.csv",
+            store_normalized="uber eats",
+        ),
+        Transaction(
+            date=date(2026, 1, 25),
+            amount=300.00,
+            store_raw="uber eats",
+            category="Dining",
+            confidence="exact",
+            txn_type=TxnType.EXPENSE,
+            source_file="test.csv",
+            store_normalized="uber eats",
+        ),
+    ]
+    for t in txns:
+        db.insert_transaction(t)
+
+    db.add_category_rule("uber eats", "Dining", "exact")
+    db.add_category_rule("walmart", "Groceries", "exact")
+    db.set_budget("2026-01", "Dining", 200.0)
+    db.set_budget("2026-01", "Groceries", 300.0)
+
+    Handler.db = db
+    Handler.csv_dir = tmp / "uploads"
+    Handler.csv_dir.mkdir()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    yield {
+        "base_url": f"http://127.0.0.1:{port}",
+        "db": db,
+        "tmp": tmp,
+        "txns": txns,
+    }
+
+    server.shutdown()
+    db.close()
+
+
+def _get(base_url, path):
+    req = urllib.request.Request(f"{base_url}{path}")
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())
+
+
+def _post(base_url, path, data=None):
+    body = json.dumps(data).encode() if data else b"{}"
+    req = urllib.request.Request(
+        f"{base_url}{path}",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())
+
+
+def _patch(base_url, path, data):
+    body = json.dumps(data).encode()
+    req = urllib.request.Request(
+        f"{base_url}{path}",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="PATCH",
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())
+
+
+def _delete(base_url, path):
+    req = urllib.request.Request(f"{base_url}{path}", method="DELETE")
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())
+
+
+def _upload(base_url, path, filename, content):
+    boundary = "----TestBoundary123"
+    body = (
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: text/csv\r\n\r\n"
+        ).encode()
+        + content
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+    req = urllib.request.Request(
+        f"{base_url}{path}",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())
+
+
+class TestServer:
+    def test_dashboard_html(self, server_fixture):
+        url = server_fixture["base_url"]
+        req = urllib.request.Request(f"{url}/")
+        with urllib.request.urlopen(req) as resp:
+            html = resp.read().decode()
+            assert resp.status == 200
+            assert "show-me-the-money" in html
+            assert "Chart.js" in html or "chart.js" in html
+
+    def test_api_transactions(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/transactions")
+        assert len(data["transactions"]) == 6
+        assert all("uuid" in t for t in data["transactions"])
+
+    def test_api_stats(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/stats")
+        assert data["stats"]["total"] == 6
+        assert data["stats"]["expenses"] == 5
+        assert data["stats"]["income"] == 1
+
+    def test_api_summary(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/summary")
+        s = data["summary"]
+        assert s["total_expenses"] > 0
+        assert "2026-01" in s["months"]
+        assert "Dining" in s["categories"]
+
+    def test_api_budgets_crud(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/budgets")
+        assert len(data["budgets"]) >= 2
+
+        _post(
+            url,
+            "/api/budgets",
+            {"month": "2026-02", "category": "Dining", "amount": 500},
+        )
+        data = _get(url, "/api/budgets?month=2026-02")
+        assert any(
+            b["category"] == "Dining" and b["amount"] == 500 for b in data["budgets"]
+        )
+
+        result = _post(
+            url, "/api/budgets/copy", {"from_month": "2026-02", "to_month": "2026-03"}
+        )
+        assert result["count"] >= 1
+
+    def test_api_delete_restore(self, server_fixture):
+        url = server_fixture["base_url"]
+        txns = _get(url, "/api/transactions")["transactions"]
+        uuid = txns[0]["uuid"]
+
+        _delete(url, f"/api/transactions/{uuid}")
+        txns_after = _get(url, "/api/transactions")["transactions"]
+        assert len(txns_after) == len(txns) - 1
+
+        deleted = _get(url, "/api/transactions/deleted")["transactions"]
+        assert any(t["uuid"] == uuid for t in deleted)
+
+        _post(url, f"/api/transactions/{uuid}/restore")
+        txns_restored = _get(url, "/api/transactions")["transactions"]
+        assert len(txns_restored) == len(txns)
+
+    def test_api_rules_crud(self, server_fixture):
+        url = server_fixture["base_url"]
+        rules = _get(url, "/api/rules")["rules"]
+        initial_count = len(rules)
+
+        _post(
+            url,
+            "/api/rules",
+            {"pattern": "starbucks", "category": "Dining", "match_type": "exact"},
+        )
+        rules_after = _get(url, "/api/rules")["rules"]
+        assert len(rules_after) == initial_count + 1
+        assert any(r["pattern"] == "starbucks" for r in rules_after)
+
+    def test_api_recategorize(self, server_fixture):
+        url = server_fixture["base_url"]
+        result = _post(url, "/api/recategorize")
+        assert "updated" in result
+
+    def test_api_anomalies(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/anomalies")
+        # $300 uber eats should be anomaly (avg of 25.5, 12, 300 = ~112, 300 > 2*112)
+        assert len(data["anomalies"]) >= 1
+        assert any(a["amount"] == 300.0 for a in data["anomalies"])
+
+    def test_api_uncategorized(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/uncategorized")
+        assert len(data["merchants"]) >= 1
+        assert any(m["store"] == "unknown shop" for m in data["merchants"])
+
+    def test_api_suggest(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/suggest")
+        # "unknown shop" contains "shop" -> Shopping
+        assert any(s["category"] == "Shopping" for s in data["suggestions"])
+
+    def test_api_store_pairs(self, server_fixture):
+        url = server_fixture["base_url"]
+        _post(
+            url,
+            "/api/store-pairs",
+            {"raw_name": "petro-68", "normalized_name": "petro canada"},
+        )
+        data = _get(url, "/api/store-pairs")
+        assert data["store_pairs"]["petro-68"] == "petro canada"
+
+    def test_api_history(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/history")
+        assert isinstance(data["history"], list)
+
+    def test_api_update_category(self, server_fixture):
+        url = server_fixture["base_url"]
+        txns = _get(url, "/api/transactions")["transactions"]
+        uncat = [
+            t for t in txns if t["category"] == "Uncategorized" or not t["category"]
+        ]
+        if uncat:
+            uuid = uncat[0]["uuid"]
+            _patch(url, f"/api/transactions/{uuid}/category", {"category": "Misc"})
+            txns_after = _get(url, "/api/transactions")["transactions"]
+            updated = [t for t in txns_after if t["uuid"] == uuid][0]
+            assert updated["category"] == "Misc"
+
+    def test_api_import_preview(self, server_fixture):
+        url = server_fixture["base_url"]
+        csv_content = (FIXTURES / "new_credit.csv").read_bytes()
+        data = _upload(url, "/api/import/preview", "new_credit.csv", csv_content)
+        assert data["preview"]["parsed"] > 0
+        assert data["preview"]["expenses"] > 0
+        # Preview shouldn't change DB
+        txns = _get(url, "/api/transactions")["transactions"]
+        assert len(txns) >= 6
+
+    def test_api_import(self, server_fixture):
+        url = server_fixture["base_url"]
+        txns_before = _get(url, "/api/transactions")["transactions"]
+        csv_content = (FIXTURES / "new_credit.csv").read_bytes()
+        data = _upload(url, "/api/import", "new_credit.csv", csv_content)
+        assert data["result"]["status"] == "imported"
+        assert data["result"]["inserted"] > 0
+        txns_after = _get(url, "/api/transactions")["transactions"]
+        assert len(txns_after) > len(txns_before)
+
+    def test_404(self, server_fixture):
+        url = server_fixture["base_url"]
+        try:
+            urllib.request.urlopen(f"{url}/api/nonexistent")
+            assert False, "Should have raised"
+        except urllib.error.HTTPError as e:
+            assert e.code == 404
+
+
+# --- Anomaly detection unit tests ---
+
+
+class TestAnomalyDetection:
+    def test_flags_outlier(self):
+        txns = [
+            Transaction(
+                date=date(2026, 1, i),
+                amount=20.0,
+                store_raw="cafe",
+                category="Dining",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            )
+            for i in range(1, 6)
+        ] + [
+            Transaction(
+                date=date(2026, 1, 10),
+                amount=200.0,
+                store_raw="fancy dinner",
+                category="Dining",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            )
+        ]
+        anomalies = compute_anomalies(txns)
+        assert len(anomalies) == 1
+        assert anomalies[0]["amount"] == 200.0
+        assert anomalies[0]["multiplier"] > 2.0
+
+    def test_skips_small_categories(self):
+        txns = [
+            Transaction(
+                date=date(2026, 1, 1),
+                amount=10.0,
+                store_raw="a",
+                category="Rare",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            ),
+            Transaction(
+                date=date(2026, 1, 2),
+                amount=1000.0,
+                store_raw="b",
+                category="Rare",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            ),
+        ]
+        anomalies = compute_anomalies(txns)
+        assert len(anomalies) == 0
+
+    def test_no_anomalies_when_uniform(self):
+        txns = [
+            Transaction(
+                date=date(2026, 1, i),
+                amount=50.0,
+                store_raw="store",
+                category="Shopping",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            )
+            for i in range(1, 10)
+        ]
+        anomalies = compute_anomalies(txns)
+        assert len(anomalies) == 0
+
+
+class TestUncategorizedGrouping:
+    def test_groups_by_store(self):
+        db_obj = Database(":memory:")
+        db_obj.initialize()
+        db_obj.insert_transaction(
+            Transaction(
+                date=date(2026, 1, 1),
+                amount=25.0,
+                store_raw="mystery",
+                store_normalized="mystery",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            )
+        )
+        db_obj.insert_transaction(
+            Transaction(
+                date=date(2026, 1, 2),
+                amount=30.0,
+                store_raw="mystery",
+                store_normalized="mystery",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            )
+        )
+        db_obj.insert_transaction(
+            Transaction(
+                date=date(2026, 1, 3),
+                amount=10.0,
+                store_raw="other",
+                store_normalized="other",
+                txn_type=TxnType.EXPENSE,
+                source_file="a.csv",
+            )
+        )
+        result = compute_uncategorized(db_obj)
+        assert len(result) == 2
+        mystery = next(g for g in result if g["store"] == "mystery")
+        assert mystery["count"] == 2
+        assert mystery["total_spend"] == 55.0
