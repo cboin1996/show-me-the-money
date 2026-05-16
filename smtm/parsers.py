@@ -70,12 +70,17 @@ def parse_scotia_new_debit(path: str | Path) -> list[Transaction]:
 def parse_scotia_old_credit(path: str | Path) -> list[Transaction]:
     """Old format: 3 cols, no headers (Date, Store, Amount)."""
     df = pd.read_csv(path, header=None, names=["date", "store", "amount"])
+    if df.empty:
+        return []
     txns = []
     for _, row in df.iterrows():
         store = str(row["store"]).lower().strip()
         if _is_ignorable(store):
             continue
-        amount = float(row["amount"])
+        try:
+            amount = float(row["amount"])
+        except (ValueError, TypeError):
+            continue
         txn_type = TxnType.INCOME if amount > 0 else TxnType.EXPENSE
         txns.append(Transaction(
             date=pd.to_datetime(row["date"]).date(),
