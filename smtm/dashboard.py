@@ -543,6 +543,13 @@ tr:hover { background: #1e293b; }
 .btn-success:hover { background: #15803d; }
 .btn-warn { background: #d97706; }
 .btn-warn:hover { background: #b45309; }
+.btn-outline { background: transparent; border: 1px solid #475569; color: #94a3b8; }
+.btn-outline:hover { border-color: #3b82f6; color: #3b82f6; }
+.bulk-bar { background: #1e293b; border: 1px solid #3b82f6; border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; display: flex; gap: 12px; align-items: center; font-size: 13px; color: #e2e8f0; }
+.bulk-bar .count { font-weight: 700; color: #3b82f6; }
+.over-budget { background: #7f1d1d33; border-left: 3px solid #dc2626; }
+input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; cursor: pointer; }
+.inline-cat-select { background: #334155; border: 1px solid #475569; color: #e2e8f0; border-radius: 4px; padding: 2px 6px; font-size: 11px; }
 .anomaly-card { border-left: 3px solid #f59e0b; padding: 10px 14px; background: #1a1a2e; border-radius: 6px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
 .anomaly-card .mult { color: #fbbf24; font-weight: 700; font-size: 16px; }
 .import-zone { border: 2px dashed #475569; border-radius: 12px; padding: 40px; text-align: center; color: #94a3b8; cursor: pointer; transition: border-color 0.2s; }
@@ -642,6 +649,10 @@ tr:hover { background: #1e293b; }
 
 <!-- CATEGORIZE TAB -->
 <div id="tab-categorize" class="hidden">
+    <div class="section" style="display:flex;gap:12px;align-items:center;padding:16px 20px">
+        <button class="btn btn-success" id="recatAllBtn">Re-categorize All Uncategorized</button>
+        <span id="recatResult" style="font-size:13px;color:#94a3b8"></span>
+    </div>
     <div id="uncategorizedSection" class="section">
         <h2>Uncategorized Merchants</h2>
         <p class="subtitle">Select a category to auto-classify all transactions from that merchant</p>
@@ -678,28 +689,34 @@ tr:hover { background: #1e293b; }
             <input type="month" id="copyToMonth" placeholder="To">
             <button class="btn" id="copyBudgetBtn">Copy Month</button>
         </div>
-        <div class="scroll-table"><table><thead><tr><th>Month</th><th>Category</th><th>Amount</th></tr></thead><tbody id="budgetBody"></tbody></table></div>
+        <div class="scroll-table"><table><thead><tr><th>Month</th><th>Category</th><th>Budget</th><th>Status</th></tr></thead><tbody id="budgetBody"></tbody></table></div>
     </div>
 </div>
 
 <!-- MANAGE TAB -->
 <div id="tab-manage" class="hidden">
     <div class="section">
-        <h2>Category Rules</h2>
+        <h2>Category Rules <span id="rulesCount" style="font-size:12px;color:#94a3b8"></span></h2>
         <div class="form-row">
             <input type="text" id="newRulePattern" placeholder="Pattern (store name)">
             <select id="newRuleCat"></select>
             <select id="newRuleType"><option value="exact">exact</option><option value="substring">substring</option></select>
             <button class="btn" id="addRuleBtn">Add Rule</button>
         </div>
+        <div class="form-row">
+            <input type="text" id="rulesSearch" placeholder="Search rules..." style="width:250px">
+        </div>
         <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Pattern</th><th>Category</th><th>Match Type</th></tr></thead><tbody id="rulesBody"></tbody></table></div>
     </div>
     <div class="section">
-        <h2>Store Pairs</h2>
+        <h2>Store Pairs <span id="pairsCount" style="font-size:12px;color:#94a3b8"></span></h2>
         <div class="form-row">
             <input type="text" id="newPairRaw" placeholder="Raw name">
             <input type="text" id="newPairNorm" placeholder="Normalized name">
             <button class="btn" id="addPairBtn">Add Pair</button>
+        </div>
+        <div class="form-row">
+            <input type="text" id="pairsSearch" placeholder="Search pairs..." style="width:250px">
         </div>
         <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Raw Name</th><th>Normalized</th></tr></thead><tbody id="pairsBody"></tbody></table></div>
     </div>
@@ -715,15 +732,25 @@ tr:hover { background: #1e293b; }
     <div><label>Category</label><br><select id="categoryFilter"><option value="">All</option></select></div>
     <div><label>Month</label><br><select id="monthFilter"><option value="">All</option></select></div>
     <div><label>Type</label><br><select id="typeFilter"><option value="">All</option><option value="expense">Expenses</option><option value="income">Income</option></select></div>
+    <div><label>From</label><br><input type="date" id="dateFrom" style="width:130px"></div>
+    <div><label>To</label><br><input type="date" id="dateTo" style="width:130px"></div>
     <div><label>Min $</label><br><input type="number" id="minAmount" style="width:80px" step="0.01"></div>
     <div><label>Max $</label><br><input type="number" id="maxAmount" style="width:80px" step="0.01"></div>
+    <div style="margin-left:auto;align-self:flex-end"><button class="btn btn-outline" id="exportCsvBtn">Export CSV</button></div>
+</div>
+<div id="bulkBar" class="bulk-bar hidden">
+    <span><span class="count" id="bulkCount">0</span> selected</span>
+    <select id="bulkCatSelect" class="inline-cat-select"><option value="">Assign category...</option></select>
+    <button class="btn btn-sm btn-success" id="bulkCatBtn">Apply</button>
+    <button class="btn btn-sm btn-danger" id="bulkDeleteBtn">Delete Selected</button>
+    <button class="btn btn-sm btn-outline" id="bulkClearBtn">Clear</button>
 </div>
 <div class="table-wrap">
     <h2>Transactions</h2>
     <div class="txn-count" id="txnCount"></div>
     <div class="scroll-table">
         <table id="txnTable">
-            <thead><tr><th data-col="date">Date</th><th data-col="store">Store</th><th data-col="category">Category</th><th data-col="amount">Amount</th><th data-col="type">Type</th><th>Actions</th></tr></thead>
+            <thead><tr><th><input type="checkbox" id="selectAll"></th><th data-col="date">Date</th><th data-col="store">Store</th><th data-col="category">Category</th><th data-col="amount">Amount</th><th data-col="type">Type</th><th>Actions</th></tr></thead>
             <tbody id="txnBody"></tbody>
         </table>
     </div>
@@ -1042,9 +1069,19 @@ const App = {
         catSel.innerHTML = (s.categories||[]).map(c=>`<option value="${c}">${c}</option>`).join('');
 
         const body = document.getElementById('budgetBody');
-        body.innerHTML = this.data.budgets.map(b =>
-            `<tr><td>${b.month}</td><td>${b.category}</td><td style="text-align:right">$${b.amount.toLocaleString()}</td></tr>`
-        ).join('');
+        const budgetMap = {};
+        this.data.budgets.forEach(b => { budgetMap[b.month + '|' + b.category] = b.amount; });
+        body.innerHTML = this.data.budgets.map(b => {
+            const md = (s.monthly_data||[]).find(m => m.month === b.month) || {};
+            const actual = md[b.category] || 0;
+            const over = actual > b.amount;
+            const pct = b.amount > 0 ? Math.round(actual / b.amount * 100) : 0;
+            return `<tr class="${over ? 'over-budget' : ''}">
+                <td>${b.month}</td><td>${b.category}</td>
+                <td style="text-align:right">$${b.amount.toLocaleString()}</td>
+                <td style="text-align:right;color:${over ? '#f87171' : '#4ade80'}">${pct}% ${over ? '⚠ OVER' : ''}</td>
+            </tr>`;
+        }).join('');
     },
 
     renderBudgetChart(month) {
@@ -1068,19 +1105,25 @@ const App = {
         });
     },
 
-    renderRules() {
+    renderRules(filter) {
+        const search = (filter || document.getElementById('rulesSearch').value || '').toLowerCase();
+        const filtered = this.data.rules.filter(r => !search || r.pattern.toLowerCase().includes(search) || r.category.toLowerCase().includes(search));
+        document.getElementById('rulesCount').textContent = `(${filtered.length}/${this.data.rules.length})`;
         const body = document.getElementById('rulesBody');
-        body.innerHTML = this.data.rules.map(r =>
+        body.innerHTML = filtered.map(r =>
             `<tr><td>${r.pattern}</td><td>${catBadge(r.category)}</td><td>${r.match_type}</td></tr>`
         ).join('');
         const catSel = document.getElementById('newRuleCat');
         catSel.innerHTML = (this.data.summary.categories||[]).map(c=>`<option value="${c}">${c}</option>`).join('');
     },
 
-    renderStorePairs() {
-        const body = document.getElementById('pairsBody');
+    renderStorePairs(filter) {
+        const search = (filter || document.getElementById('pairsSearch').value || '').toLowerCase();
         const pairs = this.data.storePairs;
-        body.innerHTML = Object.entries(pairs).map(([raw, norm]) =>
+        const entries = Object.entries(pairs).filter(([raw, norm]) => !search || raw.toLowerCase().includes(search) || norm.toLowerCase().includes(search));
+        document.getElementById('pairsCount').textContent = `(${entries.length}/${Object.keys(pairs).length})`;
+        const body = document.getElementById('pairsBody');
+        body.innerHTML = entries.map(([raw, norm]) =>
             `<tr><td>${raw}</td><td>${norm}</td></tr>`
         ).join('');
     },
@@ -1127,13 +1170,17 @@ const App = {
         const type = document.getElementById('typeFilter').value;
         const minAmt = parseFloat(document.getElementById('minAmount').value) || 0;
         const maxAmt = parseFloat(document.getElementById('maxAmount').value) || Infinity;
+        const dateFrom = document.getElementById('dateFrom').value;
+        const dateTo = document.getElementById('dateTo').value;
 
         let filtered = this.data.transactions.filter(t => {
-            if (search && !t.store_raw.includes(search) && !t.store_normalized.includes(search) && !t.category.toLowerCase().includes(search)) return false;
+            if (search && !t.store_raw.toLowerCase().includes(search) && !t.store_normalized.toLowerCase().includes(search) && !t.category.toLowerCase().includes(search)) return false;
             if (cat && t.category !== cat) return false;
             if (month && t.month !== month) return false;
             if (type && t.type !== type) return false;
             if (t.amount < minAmt || t.amount > maxAmt) return false;
+            if (dateFrom && t.date < dateFrom) return false;
+            if (dateTo && t.date > dateTo) return false;
             return true;
         });
 
@@ -1148,22 +1195,88 @@ const App = {
             });
         }
 
+        this._filtered = filtered;
         document.getElementById('txnCount').textContent =
             `Showing ${filtered.length} of ${this.data.transactions.length} transactions` +
             (filtered.length < this.data.transactions.length ? ` — $${filtered.reduce((s,t)=>s+t.amount,0).toLocaleString(undefined,{minimumFractionDigits:2})} total` : '');
 
-        document.getElementById('txnBody').innerHTML = filtered.slice(0, 500).map(t => `
-            <tr>
+        const cats = this.data.summary.categories || [];
+        const catOpts = cats.map(c=>`<option value="${c}">${c}</option>`).join('');
+        document.getElementById('txnBody').innerHTML = filtered.slice(0, 500).map(t => {
+            const checked = this._selected.has(t.uuid) ? 'checked' : '';
+            return `<tr>
+                <td><input type="checkbox" data-uuid="${t.uuid}" ${checked} onchange="App.toggleSelect('${t.uuid}', this.checked)"></td>
                 <td>${t.date}</td>
                 <td title="${t.store_raw}">${t.store_normalized}</td>
-                <td>${catBadge(t.category)}</td>
+                <td>${catBadge(t.category)} <select class="inline-cat-select" onchange="App.inlineCategory('${t.uuid}', this.value)"><option value="">edit</option>${catOpts}</select></td>
                 <td style="text-align:right;font-variant-numeric:tabular-nums">${t.type==='income'?'+':'-'}$${t.amount.toFixed(2)}</td>
                 <td>${t.type}</td>
                 <td><button class="btn btn-sm btn-danger" onclick="App.deleteTxn('${t.uuid}')">Del</button></td>
-            </tr>
-        `).join('');
+            </tr>`;
+        }).join('');
+        document.getElementById('selectAll').checked = false;
+        this.updateBulkBar();
     },
-    _sortCol: 'date', _sortAsc: false
+    _sortCol: 'date', _sortAsc: false,
+    _selected: new Set(),
+    _filtered: [],
+
+    toggleSelect(uuid, checked) {
+        if (checked) this._selected.add(uuid); else this._selected.delete(uuid);
+        this.updateBulkBar();
+    },
+
+    toggleSelectAll(checked) {
+        const checkboxes = document.querySelectorAll('#txnBody input[type="checkbox"]');
+        checkboxes.forEach(cb => { cb.checked = checked; if (checked) this._selected.add(cb.dataset.uuid); else this._selected.delete(cb.dataset.uuid); });
+        this.updateBulkBar();
+    },
+
+    updateBulkBar() {
+        const bar = document.getElementById('bulkBar');
+        const count = this._selected.size;
+        document.getElementById('bulkCount').textContent = count;
+        if (count > 0) bar.classList.remove('hidden'); else bar.classList.add('hidden');
+        const catSel = document.getElementById('bulkCatSelect');
+        const cats = this.data.summary.categories || [];
+        catSel.innerHTML = '<option value="">Assign category...</option>' + cats.map(c=>`<option value="${c}">${c}</option>`).join('');
+    },
+
+    async bulkAssignCategory() {
+        const cat = document.getElementById('bulkCatSelect').value;
+        if (!cat || !this._selected.size) return;
+        const uuids = [...this._selected];
+        for (const uuid of uuids) {
+            await api(`/api/transactions/${uuid}/category`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({category: cat})});
+        }
+        toast(`Assigned ${cat} to ${uuids.length} transactions`);
+        this._selected.clear();
+        await this.refresh();
+    },
+
+    async bulkDelete() {
+        if (!this._selected.size) return;
+        const uuids = [...this._selected];
+        for (const uuid of uuids) { await api(`/api/transactions/${uuid}`, {method:'DELETE'}); }
+        toast(`Deleted ${uuids.length} transactions`);
+        this._selected.clear();
+        await this.refresh();
+    },
+
+    async inlineCategory(uuid, category) {
+        if (!category) return;
+        await api(`/api/transactions/${uuid}/category`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({category})});
+        toast(`Updated category to ${category}`);
+        await this.refresh();
+    },
+
+    exportCsv() {
+        const rows = this._filtered || this.data.transactions;
+        const header = 'Date,Store,Category,Amount,Type\\n';
+        const csv = header + rows.map(t => `${t.date},"${t.store_normalized.replace(/"/g,'""')}",${t.category},${t.amount},${t.type}`).join('\\n');
+        const blob = new Blob([csv], {type:'text/csv'});
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'transactions.csv'; a.click();
+    }
 };
 
 // --- Tab switching ---
@@ -1188,7 +1301,7 @@ document.querySelectorAll('#txnTable th[data-col]').forEach(th => {
 });
 
 // --- Filter listeners ---
-['searchInput','categoryFilter','monthFilter','typeFilter','minAmount','maxAmount']
+['searchInput','categoryFilter','monthFilter','typeFilter','minAmount','maxAmount','dateFrom','dateTo']
     .forEach(id => document.getElementById(id).addEventListener('input', () => App.renderTable()));
 
 // --- Budget month change ---
@@ -1242,6 +1355,28 @@ document.getElementById('addPairBtn').addEventListener('click', async () => {
 
 // --- Apply all suggestions ---
 document.getElementById('applyAllSuggBtn').addEventListener('click', () => App.applyAllSuggestions());
+
+// --- Re-categorize all ---
+document.getElementById('recatAllBtn').addEventListener('click', async () => {
+    const r = await apiPost('/api/recategorize', {});
+    const msg = r.updated > 0 ? `Re-categorized ${r.updated} transactions` : 'No new matches found';
+    document.getElementById('recatResult').textContent = msg;
+    toast(msg);
+    await App.refresh();
+});
+
+// --- Bulk actions ---
+document.getElementById('selectAll').addEventListener('change', e => App.toggleSelectAll(e.target.checked));
+document.getElementById('bulkCatBtn').addEventListener('click', () => App.bulkAssignCategory());
+document.getElementById('bulkDeleteBtn').addEventListener('click', () => App.bulkDelete());
+document.getElementById('bulkClearBtn').addEventListener('click', () => { App._selected.clear(); App.renderTable(); });
+
+// --- CSV export ---
+document.getElementById('exportCsvBtn').addEventListener('click', () => App.exportCsv());
+
+// --- Rules/pairs search ---
+document.getElementById('rulesSearch').addEventListener('input', () => App.renderRules());
+document.getElementById('pairsSearch').addEventListener('input', () => App.renderStorePairs());
 
 // --- File import ---
 const importZone = document.getElementById('importZone');
