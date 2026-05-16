@@ -3,6 +3,7 @@ APP_NAME=smtm
 .PHONY: setup
 setup:
 	uv sync --extra dev
+	uv run playwright install chromium
 
 .PHONY: upgrade
 upgrade:
@@ -23,8 +24,16 @@ lint-check:
 
 .PHONY: test
 test:
+	uv run pytest --junitxml=junit/test-results.xml --cov=$(APP_NAME) --cov-report=xml --cov-report=html tests/ -v --ignore=tests/e2e
+
+.PHONY: test-e2e
+test-e2e:
+	uv run pytest tests/e2e -v
+
+.PHONY: test-all
+test-all:
 	uv run pytest --junitxml=junit/test-results.xml --cov=$(APP_NAME) --cov-report=xml --cov-report=html tests/ -v
 
 .PHONY: test-stdout
 test-stdout:
-	uv run pytest --cov=$(APP_NAME) tests/ -v
+	uv run pytest --cov=$(APP_NAME) tests/ -v --ignore=tests/e2e

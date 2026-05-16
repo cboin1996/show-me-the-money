@@ -17,6 +17,8 @@ dev = [
     "isort",
     "pytest>=7.0",
     "pytest-cov",
+    "playwright",
+    "pytest-playwright",
 ]
 
 [project.scripts]
@@ -34,3 +36,4 @@ profile = "black"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["e2e: end-to-end browser tests (require playwright)"]

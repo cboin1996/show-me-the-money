@@ -3,6 +3,7 @@
 import hashlib
 import json
 import sqlite3
+import threading
 from datetime import date, datetime
 from pathlib import Path
 
@@ -80,14 +81,19 @@ class Database:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: sqlite3.Connection | None = None
+        self._lock = threading.RLock()
 
     @property
     def conn(self) -> sqlite3.Connection:
         if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
+            with self._lock:
+                if self._conn is None:
+                    self._conn = sqlite3.connect(
+                        str(self.db_path), check_same_thread=False
+                    )
+                    self._conn.row_factory = sqlite3.Row
+                    self._conn.execute("PRAGMA journal_mode=WAL")
+                    self._conn.execute("PRAGMA foreign_keys=ON")
         return self._conn
 
     def close(self):
@@ -168,29 +174,33 @@ class Database:
         return inserted, dupes
 
     def get_all_transactions(self, include_deleted: bool = False) -> list[Transaction]:
-        if include_deleted:
-            rows = self.conn.execute(
-                "SELECT * FROM transactions ORDER BY date DESC"
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT * FROM transactions WHERE is_deleted = 0 " "ORDER BY date DESC"
-            ).fetchall()
-        return [self._row_to_txn(r) for r in rows]
+        with self._lock:
+            if include_deleted:
+                rows = self.conn.execute(
+                    "SELECT * FROM transactions ORDER BY date DESC"
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT * FROM transactions WHERE is_deleted = 0 "
+                    "ORDER BY date DESC"
+                ).fetchall()
+            return [self._row_to_txn(r) for r in rows]
 
     def get_expenses(self, include_deleted: bool = False) -> list[Transaction]:
-        sql = "SELECT * FROM transactions WHERE txn_type = 'expense'"
-        if not include_deleted:
-            sql += " AND is_deleted = 0"
-        sql += " ORDER BY date DESC"
-        return [self._row_to_txn(r) for r in self.conn.execute(sql).fetchall()]
+        with self._lock:
+            sql = "SELECT * FROM transactions WHERE txn_type = 'expense'"
+            if not include_deleted:
+                sql += " AND is_deleted = 0"
+            sql += " ORDER BY date DESC"
+            return [self._row_to_txn(r) for r in self.conn.execute(sql).fetchall()]
 
     def get_income(self, include_deleted: bool = False) -> list[Transaction]:
-        sql = "SELECT * FROM transactions WHERE txn_type = 'income'"
-        if not include_deleted:
-            sql += " AND is_deleted = 0"
-        sql += " ORDER BY date DESC"
-        return [self._row_to_txn(r) for r in self.conn.execute(sql).fetchall()]
+        with self._lock:
+            sql = "SELECT * FROM transactions WHERE txn_type = 'income'"
+            if not include_deleted:
+                sql += " AND is_deleted = 0"
+            sql += " ORDER BY date DESC"
+            return [self._row_to_txn(r) for r in self.conn.execute(sql).fetchall()]
 
     def soft_delete(self, uuid: str) -> bool:
         with self.conn:
@@ -247,10 +257,11 @@ class Database:
     # -- Category rules --
 
     def get_category_rules(self) -> list[dict]:
-        rows = self.conn.execute(
-            "SELECT * FROM category_rules ORDER BY priority DESC, pattern"
-        ).fetchall()
-        return [dict(r) for r in rows]
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM category_rules ORDER BY priority DESC, pattern"
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def add_category_rule(
         self, pattern: str, category: str, match_type: str = "exact", priority: int = 0
@@ -266,8 +277,9 @@ class Database:
     # -- Store pairs --
 
     def get_store_pairs(self) -> dict[str, str]:
-        rows = self.conn.execute("SELECT * FROM store_pairs").fetchall()
-        return {r["raw_name"]: r["normalized_name"] for r in rows}
+        with self._lock:
+            rows = self.conn.execute("SELECT * FROM store_pairs").fetchall()
+            return {r["raw_name"]: r["normalized_name"] for r in rows}
 
     def add_store_pair(self, raw_name: str, normalized_name: str):
         with self.conn:
@@ -288,16 +300,17 @@ class Database:
             )
 
     def get_budgets(self, month: str | None = None) -> list[dict]:
-        if month:
-            rows = self.conn.execute(
-                "SELECT * FROM budgets WHERE month = ? ORDER BY category",
-                (month,),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT * FROM budgets ORDER BY month, category"
-            ).fetchall()
-        return [dict(r) for r in rows]
+        with self._lock:
+            if month:
+                rows = self.conn.execute(
+                    "SELECT * FROM budgets WHERE month = ? ORDER BY category",
+                    (month,),
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT * FROM budgets ORDER BY month, category"
+                ).fetchall()
+            return [dict(r) for r in rows]
 
     def copy_budget(self, from_month: str, to_month: str) -> int:
         budgets = self.get_budgets(from_month)
@@ -308,42 +321,44 @@ class Database:
     # -- Import history --
 
     def get_import_history(self) -> list[dict]:
-        rows = self.conn.execute(
-            "SELECT * FROM import_log ORDER BY imported_at DESC"
-        ).fetchall()
-        return [dict(r) for r in rows]
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM import_log ORDER BY imported_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     # -- Stats --
 
     def get_stats(self) -> dict:
-        total = self.conn.execute(
-            "SELECT COUNT(*) FROM transactions WHERE is_deleted = 0"
-        ).fetchone()[0]
-        categorized = self.conn.execute(
-            "SELECT COUNT(*) FROM transactions "
-            "WHERE is_deleted = 0 AND category != '' AND category IS NOT NULL"
-        ).fetchone()[0]
-        expenses = self.conn.execute(
-            "SELECT COUNT(*) FROM transactions "
-            "WHERE is_deleted = 0 AND txn_type = 'expense'"
-        ).fetchone()[0]
-        income = self.conn.execute(
-            "SELECT COUNT(*) FROM transactions "
-            "WHERE is_deleted = 0 AND txn_type = 'income'"
-        ).fetchone()[0]
-        date_range = self.conn.execute(
-            "SELECT MIN(date), MAX(date) FROM transactions WHERE is_deleted = 0"
-        ).fetchone()
-        return {
-            "total": total,
-            "categorized": categorized,
-            "uncategorized": total - categorized,
-            "expenses": expenses,
-            "income": income,
-            "classification_rate": (categorized / total * 100 if total else 0),
-            "date_min": date_range[0],
-            "date_max": date_range[1],
-        }
+        with self._lock:
+            total = self.conn.execute(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted = 0"
+            ).fetchone()[0]
+            categorized = self.conn.execute(
+                "SELECT COUNT(*) FROM transactions "
+                "WHERE is_deleted = 0 AND category != '' AND category IS NOT NULL"
+            ).fetchone()[0]
+            expenses = self.conn.execute(
+                "SELECT COUNT(*) FROM transactions "
+                "WHERE is_deleted = 0 AND txn_type = 'expense'"
+            ).fetchone()[0]
+            income = self.conn.execute(
+                "SELECT COUNT(*) FROM transactions "
+                "WHERE is_deleted = 0 AND txn_type = 'income'"
+            ).fetchone()[0]
+            date_range = self.conn.execute(
+                "SELECT MIN(date), MAX(date) FROM transactions WHERE is_deleted = 0"
+            ).fetchone()
+            return {
+                "total": total,
+                "categorized": categorized,
+                "uncategorized": total - categorized,
+                "expenses": expenses,
+                "income": income,
+                "classification_rate": (categorized / total * 100 if total else 0),
+                "date_min": date_range[0],
+                "date_max": date_range[1],
+            }
 
     # -- Migration from JSON --
 
@@ -398,10 +413,11 @@ class Database:
 
         pairs = self.get_store_pairs()
 
-        categories_row = self.conn.execute(
-            "SELECT DISTINCT category FROM category_rules ORDER BY category"
-        ).fetchall()
-        categories = [r[0] for r in categories_row]
+        with self._lock:
+            categories_row = self.conn.execute(
+                "SELECT DISTINCT category FROM category_rules ORDER BY category"
+            ).fetchall()
+            categories = [r[0] for r in categories_row]
 
         return CategoryDB(
             categories=categories,

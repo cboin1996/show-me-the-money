@@ -576,15 +576,15 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
     <p id="headerSub">Loading...</p>
 </div>
 
-<div class="cards" id="cards"></div>
+<div class="cards" id="cards" data-testid="summary-cards"></div>
 
-<div class="tab-bar" id="mainTabs">
-    <div class="tab active" data-tab="overview">Overview</div>
-    <div class="tab" data-tab="analytics">Analytics</div>
-    <div class="tab" data-tab="import">Import</div>
-    <div class="tab" data-tab="categorize">Categorize</div>
-    <div class="tab" data-tab="budgets">Budgets</div>
-    <div class="tab" data-tab="manage">Manage</div>
+<div class="tab-bar" id="mainTabs" data-testid="tab-bar">
+    <div class="tab active" data-tab="overview" data-testid="tab-overview">Overview</div>
+    <div class="tab" data-tab="analytics" data-testid="tab-analytics">Analytics</div>
+    <div class="tab" data-tab="import" data-testid="tab-import">Import</div>
+    <div class="tab" data-tab="categorize" data-testid="tab-categorize">Categorize</div>
+    <div class="tab" data-tab="budgets" data-testid="tab-budgets">Budgets</div>
+    <div class="tab" data-tab="manage" data-testid="tab-manage">Manage</div>
 </div>
 
 <!-- OVERVIEW TAB -->
@@ -634,9 +634,9 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
 <div id="tab-import" class="hidden">
     <div class="section">
         <h2>Import CSV Files</h2>
-        <div class="import-zone" id="importZone">
+        <div class="import-zone" id="importZone" data-testid="import-zone">
             <p>Drag & drop CSV files here, or click to browse</p>
-            <input type="file" id="fileInput" accept=".csv" multiple>
+            <input type="file" id="fileInput" accept=".csv" multiple data-testid="file-input">
         </div>
         <div id="importPreview" class="hidden" style="margin-top:16px"></div>
         <div id="importResult" style="margin-top:16px"></div>
@@ -650,8 +650,8 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
 <!-- CATEGORIZE TAB -->
 <div id="tab-categorize" class="hidden">
     <div class="section" style="display:flex;gap:12px;align-items:center;padding:16px 20px">
-        <button class="btn btn-success" id="recatAllBtn">Re-categorize All Uncategorized</button>
-        <span id="recatResult" style="font-size:13px;color:#94a3b8"></span>
+        <button class="btn btn-success" id="recatAllBtn" data-testid="recategorize-btn">Re-categorize All Uncategorized</button>
+        <span id="recatResult" data-testid="recategorize-result" style="font-size:13px;color:#94a3b8"></span>
     </div>
     <div id="uncategorizedSection" class="section">
         <h2>Uncategorized Merchants</h2>
@@ -736,9 +736,9 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
     <div><label>To</label><br><input type="date" id="dateTo" style="width:130px"></div>
     <div><label>Min $</label><br><input type="number" id="minAmount" style="width:80px" step="0.01"></div>
     <div><label>Max $</label><br><input type="number" id="maxAmount" style="width:80px" step="0.01"></div>
-    <div style="margin-left:auto;align-self:flex-end"><button class="btn btn-outline" id="exportCsvBtn">Export CSV</button></div>
+    <div style="margin-left:auto;align-self:flex-end"><button class="btn btn-outline" id="exportCsvBtn" data-testid="export-csv-btn">Export CSV</button></div>
 </div>
-<div id="bulkBar" class="bulk-bar hidden">
+<div id="bulkBar" class="bulk-bar hidden" data-testid="bulk-bar">
     <span><span class="count" id="bulkCount">0</span> selected</span>
     <select id="bulkCatSelect" class="inline-cat-select"><option value="">Assign category...</option></select>
     <button class="btn btn-sm btn-success" id="bulkCatBtn">Apply</button>
@@ -749,9 +749,9 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
     <h2>Transactions</h2>
     <div class="txn-count" id="txnCount"></div>
     <div class="scroll-table">
-        <table id="txnTable">
-            <thead><tr><th><input type="checkbox" id="selectAll"></th><th data-col="date">Date</th><th data-col="store">Store</th><th data-col="category">Category</th><th data-col="amount">Amount</th><th data-col="type">Type</th><th>Actions</th></tr></thead>
-            <tbody id="txnBody"></tbody>
+        <table id="txnTable" data-testid="txn-table">
+            <thead><tr><th><input type="checkbox" id="selectAll" data-testid="select-all"></th><th data-col="date">Date</th><th data-col="store">Store</th><th data-col="category">Category</th><th data-col="amount">Amount</th><th data-col="type">Type</th><th>Actions</th></tr></thead>
+            <tbody id="txnBody" data-testid="txn-body"></tbody>
         </table>
     </div>
 </div>
@@ -768,7 +768,7 @@ function catBadge(cat) {
     return `<span class="cat-badge${cls}" style="background:${bg}22;color:${bg}">${cat}</span>`;
 }
 function toast(msg) {
-    const el = document.createElement('div'); el.className = 'toast'; el.textContent = msg;
+    const el = document.createElement('div'); el.className = 'toast'; el.dataset.testid = 'toast'; el.textContent = msg;
     document.body.appendChild(el); setTimeout(() => el.remove(), 3000);
 }
 async function api(path, opts={}) {
