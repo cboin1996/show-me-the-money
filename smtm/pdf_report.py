@@ -1,5 +1,6 @@
 """PDF report generation for financial summary."""
 
+from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
@@ -76,7 +77,7 @@ def generate_pdf(
     analytics: dict,
     output_path: str | Path,
 ):
-    """Generate a multi-page PDF financial report."""
+    """Generate a comprehensive multi-page PDF financial report."""
     pdf = FinanceReport("show-me-the-money - Financial Report")
     pdf.alias_nb_pages()
 
@@ -87,9 +88,10 @@ def generate_pdf(
         t for t in transactions if t.txn_type == TxnType.INCOME and not t.is_deleted
     ]
 
-    total_expenses = sum(t.amount for t in expenses)
+    total_expenses = sum(t.effective_amount for t in expenses)
     total_income = sum(t.amount for t in income)
     net_savings = total_income - total_expenses
+    num_months = len(set(t.month for t in expenses)) or 1
 
     # --- PAGE 1: Overview ---
     pdf.add_page()
@@ -105,7 +107,7 @@ def generate_pdf(
             0,
             6,
             f"{stats['date_min']} to {stats['date_max']}  |  "
-            f"{stats['total']} transactions",
+            f"{stats['total']} transactions  |  {num_months} months",
             new_x="LMARGIN",
             new_y="NEXT",
         )
@@ -117,13 +119,100 @@ def generate_pdf(
     pdf.kv_row("Net Savings", f"${net_savings:,.2f}")
     savings_rate = (net_savings / total_income * 100) if total_income > 0 else 0
     pdf.kv_row("Savings Rate", f"{savings_rate:.1f}%")
+    pdf.kv_row("Avg Monthly Expenses", f"${total_expenses / num_months:,.2f}")
+    pdf.kv_row("Avg Monthly Income", f"${total_income / num_months:,.2f}")
+    pdf.kv_row("Avg Monthly Savings", f"${net_savings / num_months:,.2f}")
     pdf.kv_row("Classification Rate", f"{stats.get('classification_rate', 0):.1f}%")
-    pdf.kv_row("Expense Transactions", str(stats.get("expenses", 0)))
-    pdf.kv_row("Income Transactions", str(stats.get("income", 0)))
+
+    # Category breakdown with averages
+    pdf.section_title("Expense Breakdown by Category")
+    cat_totals: dict[str, float] = defaultdict(float)
+    cat_counts: dict[str, int] = defaultdict(int)
+    for t in expenses:
+        cat = t.category or "Uncategorized"
+        cat_totals[cat] += t.effective_amount
+        cat_counts[cat] += 1
+    sorted_cats = sorted(cat_totals.items(), key=lambda x: -x[1])
+
+    headers = ["Category", "Total", "Monthly Avg", "% of Total", "Txns"]
+    widths = [40, 32, 32, 28, 20]
+    rows = []
+    for cat, total in sorted_cats:
+        pct = (total / total_expenses * 100) if total_expenses > 0 else 0
+        rows.append(
+            [
+                cat,
+                f"${total:,.2f}",
+                f"${total / num_months:,.2f}",
+                f"{pct:.1f}%",
+                str(cat_counts[cat]),
+            ]
+        )
+    pdf.table(headers, rows, widths)
+
+    # Income vs Expense monthly comparison
+    pdf.section_title("Monthly Income vs Expenses")
+    monthly_exp: dict[str, float] = defaultdict(float)
+    monthly_inc: dict[str, float] = defaultdict(float)
+    for t in expenses:
+        monthly_exp[t.month] += t.effective_amount
+    for t in income:
+        monthly_inc[t.month] += t.amount
+    all_months = sorted(set(list(monthly_exp.keys()) + list(monthly_inc.keys())))
+
+    headers = ["Month", "Income", "Expenses", "Net", "Savings Rate"]
+    widths = [25, 32, 32, 32, 30]
+    rows = []
+    for m in all_months:
+        inc = monthly_inc.get(m, 0)
+        exp = monthly_exp.get(m, 0)
+        net = inc - exp
+        rate = (net / inc * 100) if inc > 0 else 0
+        rows.append(
+            [
+                m,
+                f"${inc:,.2f}",
+                f"${exp:,.2f}",
+                f"${net:,.2f}",
+                f"{rate:.1f}%",
+            ]
+        )
+    pdf.table(headers, rows, widths)
+
+    # --- PAGE 2: Monthly Category Detail ---
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_text_color(30, 41, 59)
+    pdf.cell(0, 12, "Monthly Category Breakdown", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+    monthly_cat: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for t in expenses:
+        cat = t.category or "Uncategorized"
+        monthly_cat[t.month][cat] += t.effective_amount
+
+    categories = [c for c, _ in sorted_cats[:10]]
+    if categories:
+        headers = ["Month"] + [c[:12] for c in categories]
+        widths = [22] + [int(168 / len(categories))] * len(categories)
+
+        rows = []
+        for m in all_months:
+            row = [m]
+            for cat in categories:
+                amt = monthly_cat[m].get(cat, 0)
+                row.append(f"${amt:,.0f}" if amt > 0 else "-")
+            rows.append(row)
+        avg_row = ["AVG"]
+        for cat in categories:
+            total = cat_totals.get(cat, 0)
+            avg_row.append(f"${total / num_months:,.0f}")
+        rows.append(avg_row)
+        pdf.table(headers, rows, widths)
 
     # Top 10 largest expenses
     pdf.section_title("Top 10 Largest Expenses")
-    top10 = sorted(expenses, key=lambda t: -t.amount)[:10]
+    top10 = sorted(expenses, key=lambda t: -t.effective_amount)[:10]
     headers = ["Date", "Store", "Category", "Amount"]
     widths = [28, 62, 50, 30]
     rows = [
@@ -131,48 +220,28 @@ def generate_pdf(
             t.date.isoformat(),
             (t.store_normalized or t.store_raw),
             t.category or "-",
-            f"${t.amount:,.2f}",
+            f"${t.effective_amount:,.2f}",
         ]
         for t in top10
     ]
     pdf.table(headers, rows, widths)
 
-    # --- PAGE 2: Analytics ---
+    # --- PAGE 3: Analytics ---
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 20)
     pdf.set_text_color(30, 41, 59)
-    pdf.cell(0, 12, "Analytics", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 12, "Spending Analytics", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
 
     # Spending velocity
     velocity = analytics.get("velocity", {})
     if velocity:
-        pdf.section_title("Spending Velocity")
-        pdf.kv_row("Current Month", velocity.get("month", ""))
+        pdf.section_title("Current Month Pace")
+        pdf.kv_row("Month", velocity.get("month", ""))
         pdf.kv_row("Spent So Far", f"${velocity.get('spent_so_far', 0):,.2f}")
         pdf.kv_row("Daily Rate", f"${velocity.get('daily_rate', 0):,.2f}/day")
         pdf.kv_row("Projected Total", f"${velocity.get('projected_total', 0):,.2f}")
-        pdf.kv_row(
-            "Previous Month",
-            f"${velocity.get('prev_month_total', 0):,.2f}",
-        )
-
-    # Savings rate trend
-    savings_data = analytics.get("savings_rate", [])
-    if savings_data:
-        pdf.section_title("Savings Rate by Month")
-        headers = ["Month", "Income", "Expenses", "Rate"]
-        widths = [30, 40, 40, 30]
-        rows = [
-            [
-                s["month"],
-                f"${s['income']:,.2f}",
-                f"${s['expenses']:,.2f}",
-                f"{s['rate']:.1f}%",
-            ]
-            for s in savings_data
-        ]
-        pdf.table(headers, rows, widths)
+        pdf.kv_row("Previous Month", f"${velocity.get('prev_month_total', 0):,.2f}")
 
     # Month-over-month
     mom = analytics.get("mom_deltas", [])
@@ -203,7 +272,18 @@ def generate_pdf(
         ]
         pdf.table(headers, rows, widths)
 
-    # --- PAGE 3: Merchants & Recurring ---
+    # Category concentration
+    conc = analytics.get("concentration", {})
+    if conc:
+        pdf.subsection_title("Category Concentration")
+        pdf.kv_row(
+            "Top 3 categories",
+            f"{conc.get('top3_pct', 0):.1f}% of total spending",
+        )
+        for c in conc.get("top3_categories", []):
+            pdf.kv_row(f"  {c['category']}", f"${c['amount']:,.2f} ({c['pct']:.1f}%)")
+
+    # --- PAGE 4: Merchants & Recurring ---
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 20)
     pdf.set_text_color(30, 41, 59)
@@ -231,6 +311,10 @@ def generate_pdf(
     recurring = analytics.get("recurring", [])
     if recurring:
         pdf.section_title("Recurring Charges")
+        total_recurring = sum(r["annual_cost"] for r in recurring)
+        pdf.kv_row("Total Annual Recurring", f"${total_recurring:,.2f}")
+        pdf.kv_row("Monthly Recurring", f"${total_recurring / 12:,.2f}")
+        pdf.ln(4)
         headers = ["Store", "Amount", "Frequency", "Annual Cost"]
         widths = [55, 30, 35, 40]
         rows = [
@@ -244,18 +328,7 @@ def generate_pdf(
         ]
         pdf.table(headers, rows, widths)
 
-    # Category concentration
-    conc = analytics.get("concentration", {})
-    if conc:
-        pdf.subsection_title("Category Concentration")
-        pdf.kv_row(
-            "Top 3 categories account for",
-            f"{conc.get('top3_pct', 0):.1f}% of spending",
-        )
-        for c in conc.get("top3_categories", []):
-            pdf.kv_row(f"  {c['category']}", f"${c['amount']:,.2f} ({c['pct']:.1f}%)")
-
-    # --- PAGE 4: Budgets ---
+    # --- PAGE 5: Budget Status ---
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 20)
     pdf.set_text_color(30, 41, 59)
@@ -263,31 +336,31 @@ def generate_pdf(
     pdf.ln(2)
 
     if budgets:
-        # Group by month
-        from collections import defaultdict
-
         monthly_budgets: dict[str, list[dict]] = defaultdict(list)
         for b in budgets:
             monthly_budgets[b["month"]].append(b)
 
-        # Compute actual spend per category per month
         monthly_cat_spend: dict[str, dict[str, float]] = defaultdict(
             lambda: defaultdict(float)
         )
         for t in expenses:
             cat = t.category or "Uncategorized"
-            monthly_cat_spend[t.date.strftime("%Y-%m")][cat] += t.amount
+            monthly_cat_spend[t.date.strftime("%Y-%m")][cat] += t.effective_amount
 
         for month in sorted(monthly_budgets.keys(), reverse=True):
             pdf.subsection_title(month)
             headers = ["Category", "Budget", "Actual", "Remaining", "Status"]
             widths = [40, 28, 28, 32, 30]
             rows = []
+            total_budget = 0
+            total_actual = 0
             for b in sorted(monthly_budgets[month], key=lambda x: x["category"]):
                 actual = monthly_cat_spend.get(month, {}).get(b["category"], 0)
                 remaining = b["amount"] - actual
                 pct = (actual / b["amount"] * 100) if b["amount"] > 0 else 0
                 status = "OVER" if pct > 100 else f"{pct:.0f}%"
+                total_budget += b["amount"]
+                total_actual += actual
                 rows.append(
                     [
                         b["category"],
@@ -297,6 +370,18 @@ def generate_pdf(
                         status,
                     ]
                 )
+            # Totals row
+            total_remaining = total_budget - total_actual
+            total_pct = (total_actual / total_budget * 100) if total_budget > 0 else 0
+            rows.append(
+                [
+                    "TOTAL",
+                    f"${total_budget:,.2f}",
+                    f"${total_actual:,.2f}",
+                    f"${total_remaining:,.2f}",
+                    f"{total_pct:.0f}%",
+                ]
+            )
             pdf.table(headers, rows, widths)
             pdf.ln(4)
     else:
@@ -304,7 +389,7 @@ def generate_pdf(
         pdf.set_text_color(100, 116, 139)
         pdf.cell(0, 8, "No budgets configured.", new_x="LMARGIN", new_y="NEXT")
 
-    # --- PAGE 5: Outliers ---
+    # --- PAGE 6: Outliers ---
     outliers = analytics.get("zscore_outliers", [])
     if outliers:
         pdf.add_page()
@@ -318,7 +403,7 @@ def generate_pdf(
         pdf.cell(
             0,
             6,
-            "Transactions with z-score >= 2.0 (significantly above category average)",
+            "Transactions significantly above category average (z-score >= 2.0)",
             new_x="LMARGIN",
             new_y="NEXT",
         )
@@ -335,6 +420,27 @@ def generate_pdf(
                 f"{o['z_score']:.2f}",
             ]
             for o in outliers[:20]
+        ]
+        pdf.table(headers, rows, widths)
+
+    # --- Linked Offsets Summary ---
+    linked = [t for t in expenses if t.adjustment > 0]
+    if linked:
+        pdf.section_title("Transaction Offsets")
+        pdf.kv_row("Linked Transactions", str(len(linked)))
+        pdf.kv_row("Total Offset Amount", f"${sum(t.adjustment for t in linked):,.2f}")
+        pdf.ln(2)
+        headers = ["Date", "Store", "Original", "Offset", "Effective"]
+        widths = [25, 50, 30, 28, 30]
+        rows = [
+            [
+                t.date.isoformat(),
+                (t.store_normalized or t.store_raw),
+                f"${t.amount:,.2f}",
+                f"-${t.adjustment:,.2f}",
+                f"${t.effective_amount:,.2f}",
+            ]
+            for t in sorted(linked, key=lambda x: -x.adjustment)[:15]
         ]
         pdf.table(headers, rows, widths)
 

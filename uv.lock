@@ -875,13 +875,13 @@ source = { editable = "." }
 dependencies = [
     { name = "fpdf2" },
     { name = "pandas" },
-    { name = "playwright" },
 ]
 
 [package.optional-dependencies]
 dev = [
     { name = "black" },
     { name = "isort" },
+    { name = "playwright" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-playwright" },
@@ -893,7 +893,7 @@ requires-dist = [
     { name = "fpdf2", specifier = ">=2.7" },
     { name = "isort", marker = "extra == 'dev'" },
     { name = "pandas", specifier = ">=2.0" },
-    { name = "playwright" },
+    { name = "playwright", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pytest-playwright", marker = "extra == 'dev'" },

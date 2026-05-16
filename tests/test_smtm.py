@@ -1204,17 +1204,58 @@ class TestServer:
 
 
 class TestPdfReport:
-    def test_generates_valid_pdf(self, sqlite_db, sample_txns):
+    @pytest.fixture
+    def rich_db(self, tmp_path):
+        """DB with enough data to exercise all PDF sections."""
+        db = Database(tmp_path / "pdf_test.db")
+        db.initialize()
+        txns = []
+        stores = [
+            ("starbucks", "Dining", 7.50),
+            ("safeway", "Groceries", 85.00),
+            ("netflix", "Subscriptions", 15.99),
+            ("shell", "Transportation", 60.00),
+            ("amazon", "Shopping", 45.00),
+        ]
+        for month in range(1, 5):
+            for store, cat, amt in stores:
+                txns.append(
+                    Transaction(
+                        date=date(2026, month, 10),
+                        amount=amt,
+                        store_raw=store,
+                        store_normalized=store,
+                        category=cat,
+                        txn_type=TxnType.EXPENSE,
+                        source_file="test.csv",
+                    )
+                )
+            txns.append(
+                Transaction(
+                    date=date(2026, month, 1),
+                    amount=5000.0,
+                    store_raw="employer",
+                    store_normalized="employer",
+                    category="",
+                    txn_type=TxnType.INCOME,
+                    source_file="test.csv",
+                )
+            )
+        db.insert_transactions(txns)
+        db.set_budget("2026-01", "Dining", 100.0)
+        db.set_budget("2026-01", "Groceries", 200.0)
+        db.set_budget("2026-02", "Dining", 100.0)
+        return db
+
+    def test_generates_multi_page_pdf(self, rich_db):
         import tempfile
 
         from smtm.pdf_report import generate_pdf
         from smtm.server import compute_analytics
 
-        sqlite_db.insert_transactions(sample_txns)
-        sqlite_db.set_budget("2026-01", "Dining", 200.0)
-        txns = sqlite_db.get_all_transactions()
-        stats = sqlite_db.get_stats()
-        budgets = sqlite_db.get_budgets()
+        txns = rich_db.get_all_transactions()
+        stats = rich_db.get_stats()
+        budgets = rich_db.get_budgets()
         analytics = compute_analytics(txns, budgets)
 
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
@@ -1222,12 +1263,73 @@ class TestPdfReport:
 
         try:
             generate_pdf(txns, stats, budgets, analytics, out)
-            assert out.exists()
             content = out.read_bytes()
             assert content[:4] == b"%PDF"
-            assert len(content) > 500
+            # Multi-page: should be substantial
+            assert len(content) > 3000
         finally:
             out.unlink()
+
+    def test_pdf_has_expected_pages(self, rich_db):
+        import tempfile
+
+        from smtm.pdf_report import generate_pdf
+        from smtm.server import compute_analytics
+
+        txns = rich_db.get_all_transactions()
+        stats = rich_db.get_stats()
+        budgets = rich_db.get_budgets()
+        analytics = compute_analytics(txns, budgets)
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            out = Path(f.name)
+
+        try:
+            generate_pdf(txns, stats, budgets, analytics, out)
+            raw = out.read_bytes().decode("latin-1")
+            # Count pages via /Type /Page entries
+            page_count = raw.count("/Type /Page\n")
+            assert page_count >= 5
+        finally:
+            out.unlink()
+
+    def test_pdf_with_linked_offsets_is_larger(self, rich_db):
+        import tempfile
+
+        from smtm.pdf_report import generate_pdf
+        from smtm.server import compute_analytics
+
+        # Generate without offsets
+        txns = rich_db.get_all_transactions()
+        stats = rich_db.get_stats()
+        budgets = rich_db.get_budgets()
+        analytics = compute_analytics(txns, budgets)
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            out1 = Path(f.name)
+        generate_pdf(txns, stats, budgets, analytics, out1)
+        size_without = out1.stat().st_size
+
+        # Link and regenerate
+        expenses = rich_db.get_expenses()
+        income = rich_db.get_income()
+        rich_db.link_transactions(expenses[0].uuid, income[0].uuid)
+
+        txns = rich_db.get_all_transactions()
+        stats = rich_db.get_stats()
+        analytics = compute_analytics(txns, budgets)
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            out2 = Path(f.name)
+        generate_pdf(txns, stats, budgets, analytics, out2)
+        size_with = out2.stat().st_size
+
+        try:
+            # With offsets section, PDF should be larger
+            assert size_with > size_without
+        finally:
+            out1.unlink()
+            out2.unlink()
 
     def test_handles_empty_data(self):
         import tempfile

@@ -19,3 +19,4 @@ expenseDB.json
 junit/
 htmlcov/
 coverage.xml
+.coverage

@@ -597,28 +597,22 @@ class Handler(BaseHTTPRequestHandler):
             self._error(404, "Not found")
 
     def _handle_pdf_download(self):
-        from .pdf_render import render_dashboard_pdf
+        from .pdf_report import generate_pdf
 
-        port = self.server.server_address[1]
-        base_url = f"http://127.0.0.1:{port}"
+        txns = self.db.get_all_transactions()
+        stats = self.db.get_stats()
+        budgets = self.db.get_budgets()
+        analytics = compute_analytics(txns, budgets)
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            tmp_path = Path(f.name)
 
         try:
-            pdf_bytes = render_dashboard_pdf(base_url)
-        except Exception:
-            from .pdf_report import generate_pdf
-
-            txns = self.db.get_all_transactions()
-            stats = self.db.get_stats()
-            budgets = self.db.get_budgets()
-            analytics = compute_analytics(txns, budgets)
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-                tmp_path = Path(f.name)
-            try:
-                generate_pdf(txns, stats, budgets, analytics, tmp_path)
-                pdf_bytes = tmp_path.read_bytes()
-            finally:
-                if tmp_path.exists():
-                    tmp_path.unlink()
+            generate_pdf(txns, stats, budgets, analytics, tmp_path)
+            pdf_bytes = tmp_path.read_bytes()
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
 
         self.send_response(200)
         self.send_header("Content-Type", "application/pdf")
