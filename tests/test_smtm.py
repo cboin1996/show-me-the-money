@@ -376,6 +376,37 @@ class TestSQLiteDB:
         inc_txn = [t for t in txns if t.uuid == income.uuid][0]
         assert not inc_txn.is_deleted
 
+    def test_reimbursers_crud(self, sqlite_db):
+        assert sqlite_db.get_reimbursers() == []
+        sqlite_db.add_reimburser("john", "John Doe", "substring")
+        sqlite_db.add_reimburser("jane@exact", "", "exact")
+        reimbursers = sqlite_db.get_reimbursers()
+        assert len(reimbursers) == 2
+        assert reimbursers[0]["pattern"] == "jane@exact"
+        assert reimbursers[1]["pattern"] == "john"
+        assert reimbursers[1]["label"] == "John Doe"
+        assert sqlite_db.remove_reimburser("john")
+        assert not sqlite_db.remove_reimburser("nonexistent")
+        assert len(sqlite_db.get_reimbursers()) == 1
+
+    def test_pending_reimbursements(self, sqlite_db):
+        sqlite_db.add_reimburser("friend", "My Friend", "substring")
+        income = Transaction(
+            date=date(2026, 5, 1),
+            amount=100.0,
+            store_raw="e-transfer from friend bob",
+            txn_type=TxnType.INCOME,
+            source_file="test.csv",
+            store_normalized="e-transfer from friend bob",
+        )
+        sqlite_db.insert_transaction(income)
+        pending = sqlite_db.get_pending_reimbursements()
+        assert len(pending) >= 1
+        match = [p for p in pending if p["uuid"] == income.uuid]
+        assert len(match) == 1
+        assert match[0]["amount"] == 100.0
+        assert match[0]["reimburser"] == "My Friend"
+
 
 # --- Adapter tests ---
 
@@ -756,6 +787,45 @@ class TestEndToEnd:
         assert result.returncode == 0
         assert "Date range" in result.stdout
         assert "Classification rate" in result.stdout
+
+    def test_cli_reimburse(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [
+            sys.executable,
+            "-m",
+            "smtm.cli",
+            "--db-path",
+            str(db_path),
+            "--csv-dir",
+            str(FIXTURES),
+        ]
+        # Import first so there's income data
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        # Add reimburser
+        result = subprocess.run(
+            base + ["reimburse", "add", "payroll", "--match-type", "substring"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "Added reimburser" in result.stdout
+        # List
+        result = subprocess.run(
+            base + ["reimburse", "list"], capture_output=True, text=True
+        )
+        assert result.returncode == 0
+        assert "payroll" in result.stdout
+        # Pending
+        result = subprocess.run(
+            base + ["reimburse", "pending"], capture_output=True, text=True
+        )
+        assert result.returncode == 0
+        # Remove
+        result = subprocess.run(
+            base + ["reimburse", "remove", "payroll"], capture_output=True, text=True
+        )
+        assert result.returncode == 0
+        assert "Removed" in result.stdout
 
     def test_import_dedup(self, tmp_path):
         """Importing the same files twice should produce 0 new on second run."""
@@ -1190,6 +1260,39 @@ class TestServer:
         txn = [t for t in db.get_all_transactions() if t.uuid == exp_uuid][0]
         assert txn.adjustment == 0
         assert txn.linked_to == ""
+
+    def test_api_reimbursers_crud(self, server_fixture):
+        url = server_fixture["base_url"]
+        # Initially empty
+        data = _get(url, "/api/reimbursers")
+        initial_count = len(data["reimbursers"])
+        # Add
+        result = _post(
+            url,
+            "/api/reimbursers",
+            {"pattern": "friend", "label": "Friend", "match_type": "substring"},
+        )
+        assert result["ok"]
+        data = _get(url, "/api/reimbursers")
+        assert len(data["reimbursers"]) == initial_count + 1
+        assert any(r["pattern"] == "friend" for r in data["reimbursers"])
+        # Delete
+        result = _delete(url, "/api/reimbursers/friend")
+        assert result["ok"]
+        data = _get(url, "/api/reimbursers")
+        assert len(data["reimbursers"]) == initial_count
+
+    def test_api_pending_reimbursements(self, server_fixture):
+        url = server_fixture["base_url"]
+        db = server_fixture["db"]
+        # Add reimburser that matches "payroll"
+        db.add_reimburser("payroll", "Employer", "substring")
+        data = _get(url, "/api/reimbursements/pending")
+        # payroll income exists in fixture, should show as pending
+        assert len(data["pending"]) >= 1
+        assert any(p["store"] == "payroll" for p in data["pending"])
+        # Cleanup
+        db.remove_reimburser("payroll")
 
     def test_404(self, server_fixture):
         url = server_fixture["base_url"]

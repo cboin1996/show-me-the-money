@@ -61,6 +61,13 @@ CREATE TABLE IF NOT EXISTS budgets (
     UNIQUE(month, category)
 );
 
+CREATE TABLE IF NOT EXISTS reimbursers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern TEXT UNIQUE NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    match_type TEXT NOT NULL DEFAULT 'substring'
+);
+
 CREATE TABLE IF NOT EXISTS import_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_file TEXT NOT NULL,
@@ -308,6 +315,62 @@ class Database:
                 "(raw_name, normalized_name) VALUES (?, ?)",
                 (raw_name, normalized_name),
             )
+
+    # -- Reimbursers --
+
+    def get_reimbursers(self) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM reimbursers ORDER BY pattern"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def add_reimburser(
+        self, pattern: str, label: str = "", match_type: str = "substring"
+    ):
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO reimbursers (pattern, label, match_type) "
+                "VALUES (?, ?, ?)",
+                (pattern, label or pattern, match_type),
+            )
+
+    def remove_reimburser(self, pattern: str) -> bool:
+        with self.conn:
+            cursor = self.conn.execute(
+                "DELETE FROM reimbursers WHERE pattern = ?", (pattern,)
+            )
+        return cursor.rowcount > 0
+
+    def get_pending_reimbursements(self) -> list[dict]:
+        """Find unlinked income from known reimbursers."""
+        reimbursers = self.get_reimbursers()
+        if not reimbursers:
+            return []
+        income = self.get_income()
+        unlinked = [t for t in income if not t.linked_to]
+        pending = []
+        for t in unlinked:
+            store = (t.store_normalized or t.store_raw).lower()
+            for r in reimbursers:
+                pattern = r["pattern"].lower()
+                matched = False
+                if r["match_type"] == "exact":
+                    matched = store == pattern
+                else:
+                    matched = pattern in store
+                if matched:
+                    pending.append(
+                        {
+                            "uuid": t.uuid,
+                            "date": t.date.isoformat(),
+                            "store": t.store_normalized or t.store_raw,
+                            "amount": round(t.amount, 2),
+                            "reimburser": r["label"] or r["pattern"],
+                        }
+                    )
+                    break
+        return pending
 
     # -- Budgets --
 

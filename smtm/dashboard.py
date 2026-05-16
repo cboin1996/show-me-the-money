@@ -727,6 +727,19 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
         <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Raw Name</th><th>Normalized</th></tr></thead><tbody id="pairsBody"></tbody></table></div>
     </div>
     <div class="section">
+        <h2>Reimbursers <span id="reimbursersCount" style="font-size:12px;color:#94a3b8"></span></h2>
+        <div class="form-row">
+            <input type="text" id="newReimburserPattern" placeholder="Pattern (e.g. friend name)">
+            <input type="text" id="newReimburserLabel" placeholder="Label (optional)">
+            <select id="newReimburserType"><option value="substring">substring</option><option value="exact">exact</option></select>
+            <button class="btn" id="addReimburserBtn">Add Reimburser</button>
+        </div>
+        <div class="scroll-table" style="max-height:200px"><table><thead><tr><th>Pattern</th><th>Label</th><th>Match</th><th></th></tr></thead><tbody id="reimbursersBody"></tbody></table></div>
+        <h3 style="margin-top:16px;font-size:14px">Pending Reimbursements</h3>
+        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Income from known reimbursers not yet linked to an expense</p>
+        <div class="scroll-table" style="max-height:250px"><table><thead><tr><th>Date</th><th>From</th><th>Amount</th><th>Actions</th></tr></thead><tbody id="pendingReimbBody" data-testid="pending-reimb-body"></tbody></table></div>
+    </div>
+    <div class="section">
         <h2>Recycle Bin</h2>
         <div class="scroll-table"><table><thead><tr><th>Date</th><th>Store</th><th>Amount</th><th>Actions</th></tr></thead><tbody id="recycleBody"></tbody></table></div>
     </div>
@@ -791,11 +804,12 @@ const App = {
     charts: {},
 
     async init() {
-        const [txns, summary, budgets, rules, pairs, history, anomalies, uncat, suggest, deleted, analytics] = await Promise.all([
+        const [txns, summary, budgets, rules, pairs, history, anomalies, uncat, suggest, deleted, analytics, reimbursers, pendingReimb] = await Promise.all([
             api('/api/transactions'), api('/api/summary'), api('/api/budgets'),
             api('/api/rules'), api('/api/store-pairs'), api('/api/history'),
             api('/api/anomalies'), api('/api/uncategorized'), api('/api/suggest'),
             api('/api/transactions/deleted'), api('/api/analytics'),
+            api('/api/reimbursers'), api('/api/reimbursements/pending'),
         ]);
         this.data.transactions = txns.transactions || [];
         this.data.summary = summary.summary || {};
@@ -808,6 +822,8 @@ const App = {
         this.data.suggestions = suggest.suggestions || [];
         this.data.deleted = deleted.transactions || [];
         this.data.analytics = analytics.analytics || {};
+        this.data.reimbursers = reimbursers.reimbursers || [];
+        this.data.pendingReimb = pendingReimb.pending || [];
         this.renderAll();
     },
 
@@ -824,6 +840,7 @@ const App = {
         this.renderBudgets();
         this.renderRules();
         this.renderStorePairs();
+        this.renderReimbursers();
         this.renderHistory();
         this.renderRecycleBin();
         this.populateFilters();
@@ -1134,6 +1151,42 @@ const App = {
         ).join('');
     },
 
+    renderReimbursers() {
+        const body = document.getElementById('reimbursersBody');
+        document.getElementById('reimbursersCount').textContent = `(${this.data.reimbursers.length})`;
+        body.innerHTML = this.data.reimbursers.map(r =>
+            `<tr><td>${r.pattern}</td><td>${r.label || ''}</td><td>${r.match_type}</td><td><button class="btn btn-sm btn-danger" onclick="App.deleteReimburser('${r.pattern.replace(/'/g,"\\'")}')">Del</button></td></tr>`
+        ).join('');
+        const pending = document.getElementById('pendingReimbBody');
+        pending.innerHTML = this.data.pendingReimb.map(p =>
+            `<tr><td>${p.date}</td><td>${p.store}</td><td style="color:#4ade80">+$${p.amount.toFixed(2)}</td><td><button class="btn btn-sm btn-success" onclick="App.linkPending('${p.uuid}')">Link to Expense</button></td></tr>`
+        ).join('');
+    },
+
+    async deleteReimburser(pattern) {
+        await api('/api/reimbursers/' + encodeURIComponent(pattern), {method:'DELETE'});
+        toast('Reimburser removed');
+        await this.refresh();
+    },
+
+    linkPending(incomeUuid) {
+        const expenses = this.data.transactions.filter(t => t.type === 'expense' && t.adjustment === 0);
+        const body = document.getElementById('linkModalBody');
+        this._linkPendingIncomeUuid = incomeUuid;
+        body.innerHTML = `<p style="font-size:13px;color:#94a3b8;margin-bottom:12px">Select an expense to offset with this reimbursement:</p>` +
+            `<table style="width:100%"><thead><tr><th>Date</th><th>Store</th><th>Amount</th><th></th></tr></thead><tbody>` +
+            expenses.slice(0, 100).map(t => `<tr><td>${t.date}</td><td>${t.store_normalized}</td><td style="color:#f87171">-$${t.amount.toFixed(2)}</td><td><button class="btn btn-sm btn-success" onclick="App.linkPendingTo('${t.uuid}')">Link</button></td></tr>`).join('') +
+            `</tbody></table>`;
+        document.getElementById('linkModal').classList.remove('hidden');
+    },
+
+    async linkPendingTo(expenseUuid) {
+        await api('/api/link', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({expense_uuid:expenseUuid, income_uuid:this._linkPendingIncomeUuid})});
+        document.getElementById('linkModal').classList.add('hidden');
+        toast('Reimbursement linked to expense');
+        await this.refresh();
+    },
+
     renderHistory() {
         const body = document.getElementById('historyBody');
         body.innerHTML = this.data.history.map(h =>
@@ -1396,6 +1449,19 @@ document.getElementById('addPairBtn').addEventListener('click', async () => {
     toast(`Pair added: ${raw} → ${norm}`);
     document.getElementById('newPairRaw').value = '';
     document.getElementById('newPairNorm').value = '';
+    await App.refresh();
+});
+
+// --- Add reimburser ---
+document.getElementById('addReimburserBtn').addEventListener('click', async () => {
+    const pattern = document.getElementById('newReimburserPattern').value.trim();
+    const label = document.getElementById('newReimburserLabel').value.trim();
+    const matchType = document.getElementById('newReimburserType').value;
+    if (!pattern) return;
+    await apiPost('/api/reimbursers', {pattern, label, match_type: matchType});
+    toast(`Reimburser added: ${pattern}`);
+    document.getElementById('newReimburserPattern').value = '';
+    document.getElementById('newReimburserLabel').value = '';
     await App.refresh();
 });
 

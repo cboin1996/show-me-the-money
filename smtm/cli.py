@@ -306,6 +306,48 @@ def cmd_delete(args):
     db.close()
 
 
+def cmd_reimburse(args):
+    db = get_db(args)
+
+    if args.reimburse_action == "add":
+        label = args.label or args.pattern
+        db.add_reimburser(args.pattern, label, args.match_type)
+        print(f"  Added reimburser: {args.pattern} ({args.match_type})")
+    elif args.reimburse_action == "remove":
+        if db.remove_reimburser(args.pattern):
+            print(f"  Removed: {args.pattern}")
+        else:
+            print(f"  Not found: {args.pattern}")
+    elif args.reimburse_action == "list":
+        reimbursers = db.get_reimbursers()
+        if not reimbursers:
+            print("  No reimbursers configured.")
+        else:
+            print(f"  {'Pattern':<30} {'Label':<20} {'Match'}")
+            print(f"  {'-'*30} {'-'*20} {'-'*10}")
+            for r in reimbursers:
+                print(f"  {r['pattern']:<30} {r['label']:<20} {r['match_type']}")
+    elif args.reimburse_action == "pending":
+        pending = db.get_pending_reimbursements()
+        if not pending:
+            print("  No pending reimbursements.")
+        else:
+            print(f"  {'Date':<12} {'From':<25} {'Amount':<12} UUID")
+            print(f"  {'-'*12} {'-'*25} {'-'*12} {'-'*8}")
+            for p in pending:
+                print(
+                    f"  {p['date']:<12} {p['reimburser']:<25} "
+                    f"${p['amount']:<11,.2f} {p['uuid'][:8]}"
+                )
+    elif args.reimburse_action == "link":
+        if db.link_transactions(args.expense_uuid, args.income_uuid):
+            print(f"  Linked {args.income_uuid[:8]}... -> {args.expense_uuid[:8]}...")
+        else:
+            print("  Failed: transactions not found or already linked.")
+
+    db.close()
+
+
 def cmd_serve(args):
     from .server import run_server
 
@@ -385,6 +427,27 @@ def main():
     dlt = sub.add_parser("delete", help="Soft-delete transactions")
     dlt.add_argument("uuids", nargs="+", help="Transaction UUIDs")
 
+    # reimburse
+    reimb = sub.add_parser("reimburse", help="Manage reimbursers and pending offsets")
+    reimb_sub = reimb.add_subparsers(dest="reimburse_action")
+
+    reimb_add = reimb_sub.add_parser("add", help="Add a known reimburser")
+    reimb_add.add_argument("pattern", help="Store name pattern to match")
+    reimb_add.add_argument("--label", help="Display label")
+    reimb_add.add_argument(
+        "--match-type", default="substring", choices=["exact", "substring"]
+    )
+
+    reimb_rm = reimb_sub.add_parser("remove", help="Remove a reimburser")
+    reimb_rm.add_argument("pattern", help="Pattern to remove")
+
+    reimb_sub.add_parser("list", help="List configured reimbursers")
+    reimb_sub.add_parser("pending", help="Show pending reimbursements")
+
+    reimb_link = reimb_sub.add_parser("link", help="Link income to expense")
+    reimb_link.add_argument("income_uuid", help="Income transaction UUID")
+    reimb_link.add_argument("expense_uuid", help="Expense transaction UUID")
+
     # serve
     srv = sub.add_parser("serve", help="Start interactive web dashboard")
     srv.add_argument("--host", default="127.0.0.1", help="Bind address")
@@ -400,6 +463,7 @@ def main():
         "budget": cmd_budget,
         "history": cmd_history,
         "delete": cmd_delete,
+        "reimburse": cmd_reimburse,
         "serve": cmd_serve,
     }
 

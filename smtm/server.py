@@ -469,6 +469,10 @@ class Handler(BaseHTTPRequestHandler):
             txns = self.db.get_all_transactions()
             budgets = self.db.get_budgets()
             self._json_response({"analytics": compute_analytics(txns, budgets)})
+        elif path == "/api/reimbursers":
+            self._json_response({"reimbursers": self.db.get_reimbursers()})
+        elif path == "/api/reimbursements/pending":
+            self._json_response({"pending": self.db.get_pending_reimbursements()})
         elif path == "/api/report/pdf":
             self._handle_pdf_download()
         else:
@@ -541,6 +545,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._json_response({"ok": True})
             else:
                 self._error(404, "Transaction not found")
+        elif path == "/api/reimbursers":
+            data = self._read_json_body()
+            pattern = data.get("pattern", "")
+            if not pattern:
+                self._error(400, "pattern required")
+                return
+            label = data.get("label", "")
+            match_type = data.get("match_type", "substring")
+            self.db.add_reimburser(pattern, label, match_type)
+            self._json_response({"ok": True})
         elif path == "/api/link":
             data = self._read_json_body()
             expense_uuid = data.get("expense_uuid", "")
@@ -587,7 +601,16 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
-        if path.startswith("/api/transactions/"):
+        if path.startswith("/api/reimbursers/"):
+            pattern = path[len("/api/reimbursers/") :]
+            from urllib.parse import unquote
+
+            pattern = unquote(pattern)
+            if self.db.remove_reimburser(pattern):
+                self._json_response({"ok": True})
+            else:
+                self._error(404, "Reimburser not found")
+        elif path.startswith("/api/transactions/"):
             uuid = self._extract_uuid(path, "/api/transactions/")
             if self.db.soft_delete(uuid):
                 self._json_response({"ok": True})
