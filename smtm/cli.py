@@ -467,13 +467,17 @@ def cmd_recategorize(args):
 
 
 def cmd_serve(args):
+    import os
+
     from .server import run_server
 
+    reload = getattr(args, "reload", False) and not os.environ.get("_SMTM_NO_RELOAD")
     run_server(
         db_path=args.db_path,
         host=args.host,
         port=args.port,
         csv_dir=args.csv_dir,
+        reload=reload,
     )
 
 
@@ -613,6 +617,9 @@ def main():
     srv = sub.add_parser("serve", help="Start interactive web dashboard")
     srv.add_argument("--host", default="127.0.0.1", help="Bind address")
     srv.add_argument("--port", type=int, default=8000, help="Port number")
+    srv.add_argument(
+        "--reload", action="store_true", help="Auto-restart on .py file changes"
+    )
 
     args = parser.parse_args()
 

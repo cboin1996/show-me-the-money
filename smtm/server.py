@@ -763,9 +763,25 @@ class Handler(BaseHTTPRequestHandler):
                 tmp_path.unlink()
 
 
+def _get_py_mtimes() -> dict[str, float]:
+    src = Path(__file__).parent
+    return {str(p): p.stat().st_mtime for p in src.rglob("*.py")}
+
+
 def run_server(
-    db_path: str, host: str = "127.0.0.1", port: int = 8000, csv_dir: str = "data/new"
+    db_path: str,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    csv_dir: str = "data/new",
+    reload: bool = False,
 ):
+    if reload:
+        _run_with_reload(db_path, host, port, csv_dir)
+    else:
+        _run_once(db_path, host, port, csv_dir)
+
+
+def _run_once(db_path: str, host: str, port: int, csv_dir: str):
     db = Database(db_path)
     db.initialize()
     Handler.db = db
@@ -777,12 +793,55 @@ def run_server(
     print(f"Dashboard: http://{host}:{port}")
     print("Press Ctrl+C to stop")
     try:
-        import webbrowser
+        import os
 
-        webbrowser.open(f"http://{host}:{port}")
+        if not os.environ.get("_SMTM_NO_RELOAD"):
+            import webbrowser
+
+            webbrowser.open(f"http://{host}:{port}")
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         db.close()
         server.server_close()
+
+
+def _run_with_reload(db_path: str, host: str, port: int, csv_dir: str):
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "smtm.cli",
+        "--db-path",
+        db_path,
+        "--csv-dir",
+        csv_dir,
+        "serve",
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+    mtimes = _get_py_mtimes()
+    proc = subprocess.Popen(cmd, env={**os.environ, "_SMTM_NO_RELOAD": "1"})
+    print(f"[reload] Watching for .py changes in smtm/")
+    try:
+        while True:
+            time.sleep(1)
+            new_mtimes = _get_py_mtimes()
+            if new_mtimes != mtimes:
+                changed = [p for p in new_mtimes if mtimes.get(p) != new_mtimes[p]]
+                print(f"[reload] Changed: {', '.join(Path(p).name for p in changed)}")
+                proc.send_signal(signal.SIGTERM)
+                proc.wait()
+                mtimes = new_mtimes
+                proc = subprocess.Popen(cmd, env={**os.environ, "_SMTM_NO_RELOAD": "1"})
+    except KeyboardInterrupt:
+        proc.send_signal(signal.SIGTERM)
+        proc.wait()
