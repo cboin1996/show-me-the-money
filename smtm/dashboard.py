@@ -921,6 +921,8 @@ const App = {
             <div class="card"><div class="label">Net Savings</div><div class="value ${(s.net_savings||0)>=0?'green':'red'}">$${(s.net_savings||0).toLocaleString()}</div></div>
             <div class="card"><div class="label">Avg Monthly Spend</div><div class="value blue">$${avgMonthly.toLocaleString()}</div></div>
             <div class="card"><div class="label">Classification</div><div class="value purple">${(s.classification_rate||0).toFixed(0)}%</div></div>
+            <div class="card"><div class="label">Transactions</div><div class="value blue">${this._txnTotal || 0}</div></div>
+            <div class="card"><div class="label">Months Tracked</div><div class="value purple">${s.num_months || 0}</div></div>
         `;
     },
 
@@ -966,17 +968,24 @@ const App = {
         });
     },
 
+    _anomalyPage: 5,
     renderAnomalies() {
         const sec = document.getElementById('anomaliesSection');
         const list = document.getElementById('anomaliesList');
         if (!this.data.anomalies.length) { sec.classList.add('hidden'); return; }
         sec.classList.remove('hidden');
-        list.innerHTML = this.data.anomalies.slice(0, 20).map(a => `
+        const showing = this.data.anomalies.slice(0, this._anomalyPage);
+        const hasMore = this.data.anomalies.length > this._anomalyPage;
+        list.innerHTML = showing.map(a => `
             <div class="anomaly-card">
                 <div><strong>${a.store}</strong> · ${a.date} · ${catBadge(a.category)}<br><span style="color:#94a3b8;font-size:12px">Avg: $${a.category_avg.toLocaleString()}</span></div>
                 <div style="text-align:right"><div class="mult">${a.multiplier}x</div><div style="color:#f87171;font-weight:700">$${a.amount.toLocaleString()}</div></div>
             </div>
-        `).join('');
+        `).join('') + (hasMore ? `<button class="btn btn-sm btn-outline" onclick="App.showMoreAnomalies()" style="margin-top:8px">Show More (${this.data.anomalies.length - this._anomalyPage} remaining)</button>` : '');
+    },
+    showMoreAnomalies() {
+        this._anomalyPage += 10;
+        this.renderAnomalies();
     },
 
     renderAnalytics() {
