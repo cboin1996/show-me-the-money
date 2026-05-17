@@ -433,8 +433,16 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif path == "/api/transactions":
+            params = parse_qs(parsed.query)
+            offset = int(params.get("offset", [0])[0])
+            limit = int(params.get("limit", [0])[0])
             txns = self.db.get_all_transactions()
-            self._json_response({"transactions": _txns_to_json(txns)})
+            total = len(txns)
+            if limit > 0:
+                page = txns[offset : offset + limit]
+            else:
+                page = txns
+            self._json_response({"transactions": _txns_to_json(page), "total": total})
         elif path == "/api/transactions/deleted":
             txns = self.db.get_all_transactions(include_deleted=True)
             deleted = [t for t in txns if t.is_deleted]
@@ -445,6 +453,16 @@ class Handler(BaseHTTPRequestHandler):
             txns = self.db.get_all_transactions()
             summary = _compute_summary(txns)
             self._json_response({"summary": summary})
+        elif path == "/api/overview":
+            txns = self.db.get_all_transactions()
+            budgets = self.db.get_budgets()
+            self._json_response(
+                {
+                    "summary": _compute_summary(txns),
+                    "anomalies": compute_anomalies(txns),
+                    "analytics": compute_analytics(txns, budgets),
+                }
+            )
         elif path == "/api/budgets":
             params = parse_qs(parsed.query)
             month = params.get("month", [None])[0]

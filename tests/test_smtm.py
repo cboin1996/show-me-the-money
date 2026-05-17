@@ -1148,7 +1148,26 @@ class TestServer:
         url = server_fixture["base_url"]
         data = _get(url, "/api/transactions")
         assert len(data["transactions"]) == 6
+        assert data["total"] == 6
         assert all("uuid" in t for t in data["transactions"])
+
+    def test_api_transactions_paginated(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/transactions?offset=0&limit=2")
+        assert len(data["transactions"]) == 2
+        assert data["total"] == 6
+        data2 = _get(url, "/api/transactions?offset=2&limit=2")
+        assert len(data2["transactions"]) == 2
+        assert data["transactions"][0]["uuid"] != data2["transactions"][0]["uuid"]
+
+    def test_api_overview(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/overview")
+        assert "summary" in data
+        assert "anomalies" in data
+        assert "analytics" in data
+        assert data["summary"]["total_expenses"] > 0
+        assert "2026-01" in data["summary"]["months"]
 
     def test_api_stats(self, server_fixture):
         url = server_fixture["base_url"]

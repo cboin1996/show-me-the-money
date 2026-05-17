@@ -817,30 +817,47 @@ const App = {
     data: { transactions: [], summary: {}, budgets: [], rules: [], storePairs: {}, history: [], anomalies: [], uncategorized: [], suggestions: [], deleted: [], analytics: {} },
     charts: {},
 
+    _txnPage: 0,
+    _txnPageSize: 500,
+    _txnTotal: 0,
+
     async init() {
-        const [txns, summary, budgets, rules, pairs, history, anomalies, uncat, suggest, deleted, analytics, reimbursers, pendingReimb, reimburserPairs] = await Promise.all([
-            api('/api/transactions'), api('/api/summary'), api('/api/budgets'),
+        const [txns, overview, budgets, rules, pairs, history, uncat, suggest, deleted, reimbursers, pendingReimb, reimburserPairs] = await Promise.all([
+            api(`/api/transactions?offset=0&limit=${this._txnPageSize}`),
+            api('/api/overview'),
+            api('/api/budgets'),
             api('/api/rules'), api('/api/store-pairs'), api('/api/history'),
-            api('/api/anomalies'), api('/api/uncategorized'), api('/api/suggest'),
-            api('/api/transactions/deleted'), api('/api/analytics'),
+            api('/api/uncategorized'), api('/api/suggest'),
+            api('/api/transactions/deleted'),
             api('/api/reimbursers'), api('/api/reimbursements/pending'),
             api('/api/reimburser-pairs'),
         ]);
         this.data.transactions = txns.transactions || [];
-        this.data.summary = summary.summary || {};
+        this._txnTotal = txns.total || this.data.transactions.length;
+        this._txnPage = 0;
+        this.data.summary = overview.summary || {};
+        this.data.anomalies = overview.anomalies || [];
+        this.data.analytics = overview.analytics || {};
         this.data.budgets = budgets.budgets || [];
         this.data.rules = rules.rules || [];
         this.data.storePairs = pairs.store_pairs || {};
         this.data.history = history.history || [];
-        this.data.anomalies = anomalies.anomalies || [];
         this.data.uncategorized = uncat.merchants || [];
         this.data.suggestions = suggest.suggestions || [];
         this.data.deleted = deleted.transactions || [];
-        this.data.analytics = analytics.analytics || {};
         this.data.reimbursers = reimbursers.reimbursers || [];
         this.data.pendingReimb = pendingReimb.pending || [];
         this.data.reimburserPairs = reimburserPairs.pairs || [];
         this.renderAll();
+    },
+
+    async loadMoreTransactions() {
+        this._txnPage++;
+        const offset = this._txnPage * this._txnPageSize;
+        if (offset >= this._txnTotal) return;
+        const data = await api(`/api/transactions?offset=${offset}&limit=${this._txnPageSize}`);
+        this.data.transactions = this.data.transactions.concat(data.transactions || []);
+        this.renderTable();
     },
 
     async refresh() { await this.init(); },
@@ -1352,9 +1369,12 @@ const App = {
         }
 
         this._filtered = filtered;
-        document.getElementById('txnCount').textContent =
-            `Showing ${filtered.length} of ${this.data.transactions.length} transactions` +
-            (filtered.length < this.data.transactions.length ? ` — $${filtered.reduce((s,t)=>s+t.amount,0).toLocaleString(undefined,{minimumFractionDigits:2})} total` : '');
+        const hasMore = this.data.transactions.length < this._txnTotal;
+        const loadedInfo = hasMore ? ` (${this.data.transactions.length}/${this._txnTotal} loaded)` : '';
+        document.getElementById('txnCount').innerHTML =
+            `Showing ${filtered.length} of ${this.data.transactions.length} transactions${loadedInfo}` +
+            (filtered.length < this.data.transactions.length ? ` — $${filtered.reduce((s,t)=>s+t.amount,0).toLocaleString(undefined,{minimumFractionDigits:2})} total` : '') +
+            (hasMore ? ` <button class="btn btn-sm btn-outline" onclick="App.loadMoreTransactions()">Load More</button>` : '');
 
         const cats = this.data.summary.categories || [];
         const catOpts = cats.map(c=>`<option value="${c}">${c}</option>`).join('');
