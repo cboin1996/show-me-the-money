@@ -1157,8 +1157,9 @@ const App = {
         const s = this.data.summary;
         const monthSel = document.getElementById('budgetMonth');
         const months = s.months || [];
-        monthSel.innerHTML = months.map(m => `<option value="${m}">${m}</option>`).join('');
-        if (months.length) this.renderBudgetChart(months[months.length-1]);
+        const latest = months.length ? months[months.length-1] : '';
+        monthSel.innerHTML = months.map(m => `<option value="${m}"${m===latest?' selected':''}>${m}</option>`).join('');
+        if (latest) this.renderBudgetChart(latest);
 
         const catSel = document.getElementById('newBudgetCat');
         catSel.innerHTML = (s.categories||[]).map(c=>`<option value="${c}">${c}</option>`).join('');
