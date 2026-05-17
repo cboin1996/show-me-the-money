@@ -298,11 +298,18 @@ def cmd_history(args):
 
 def cmd_delete(args):
     db = get_db(args)
-    for uuid in args.uuids:
-        if db.soft_delete(uuid):
-            print(f"  Deleted {uuid[:8]}...")
-        else:
-            print(f"  Not found: {uuid[:8]}...")
+    if args.restore:
+        for uuid in args.uuids:
+            if db.restore(uuid):
+                print(f"  Restored {uuid[:8]}...")
+            else:
+                print(f"  Not found: {uuid[:8]}...")
+    else:
+        for uuid in args.uuids:
+            if db.soft_delete(uuid):
+                print(f"  Deleted {uuid[:8]}...")
+            else:
+                print(f"  Not found: {uuid[:8]}...")
     db.close()
 
 
@@ -406,6 +413,11 @@ def cmd_reimburse(args):
             print("  Pair removed.")
         else:
             print("  Pair not found.")
+    elif args.reimburse_action == "unlink":
+        if db.unlink_transactions(args.expense_uuid):
+            print(f"  Unlinked {args.expense_uuid[:8]}...")
+        else:
+            print("  Not found or not linked.")
     elif args.reimburse_action == "discover":
         discovered = db.discover_reimburser_pairs()
         if not discovered:
@@ -419,6 +431,14 @@ def cmd_reimburse(args):
                     f"{d['expense_pattern']:<30} {d['link_count']}"
                 )
 
+    db.close()
+
+
+def cmd_recategorize(args):
+    db = get_db(args)
+    cat_db = db.load_category_db()
+    updated = db.recategorize_all(cat_db)
+    print(f"  Re-categorized {updated} transactions.")
     db.close()
 
 
@@ -507,9 +527,15 @@ def main():
     st_disc = st_sub.add_parser("discover", help="Fuzzy-match stores to suggest pairs")
     st_disc.add_argument("--apply", action="store_true", help="Apply discovered pairs")
 
+    # recategorize
+    sub.add_parser(
+        "recategorize", help="Re-run categorizer on uncategorized transactions"
+    )
+
     # delete
     dlt = sub.add_parser("delete", help="Soft-delete transactions")
     dlt.add_argument("uuids", nargs="+", help="Transaction UUIDs")
+    dlt.add_argument("--restore", action="store_true", help="Restore instead of delete")
 
     # reimburse
     reimb = sub.add_parser("reimburse", help="Manage reimbursers and pending offsets")
@@ -544,6 +570,11 @@ def main():
     reimb_rp.add_argument("reimburser_pattern", help="Reimburser store pattern")
     reimb_rp.add_argument("expense_pattern", help="Expense store pattern")
 
+    reimb_unlink = reimb_sub.add_parser(
+        "unlink", help="Remove offset link from expense"
+    )
+    reimb_unlink.add_argument("expense_uuid", help="Expense transaction UUID to unlink")
+
     reimb_sub.add_parser("discover", help="Discover pairs from historical links")
 
     # serve
@@ -561,6 +592,7 @@ def main():
         "budget": cmd_budget,
         "history": cmd_history,
         "stores": cmd_stores,
+        "recategorize": cmd_recategorize,
         "delete": cmd_delete,
         "reimburse": cmd_reimburse,
         "serve": cmd_serve,

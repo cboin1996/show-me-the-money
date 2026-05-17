@@ -991,6 +991,72 @@ class TestEndToEnd:
         )
         assert result.returncode == 0
 
+    def test_cli_recategorize(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [
+            sys.executable,
+            "-m",
+            "smtm.cli",
+            "--db-path",
+            str(db_path),
+            "--csv-dir",
+            str(FIXTURES),
+        ]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        result = subprocess.run(base + ["recategorize"], capture_output=True, text=True)
+        assert result.returncode == 0
+        assert "Re-categorized" in result.stdout
+
+    def test_cli_delete_restore(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [
+            sys.executable,
+            "-m",
+            "smtm.cli",
+            "--db-path",
+            str(db_path),
+            "--csv-dir",
+            str(FIXTURES),
+        ]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        db = Database(str(db_path))
+        db.initialize()
+        txns = db.get_all_transactions()
+        uuid = txns[0].uuid
+        db.close()
+        # Delete
+        result = subprocess.run(base + ["delete", uuid], capture_output=True, text=True)
+        assert "Deleted" in result.stdout
+        # Restore
+        result = subprocess.run(
+            base + ["delete", "--restore", uuid], capture_output=True, text=True
+        )
+        assert "Restored" in result.stdout
+
+    def test_cli_reimburse_unlink(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [
+            sys.executable,
+            "-m",
+            "smtm.cli",
+            "--db-path",
+            str(db_path),
+            "--csv-dir",
+            str(FIXTURES),
+        ]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        # Unlink a non-linked txn should fail gracefully
+        db = Database(str(db_path))
+        db.initialize()
+        txns = db.get_expenses()
+        uuid = txns[0].uuid
+        db.close()
+        result = subprocess.run(
+            base + ["reimburse", "unlink", uuid], capture_output=True, text=True
+        )
+        assert result.returncode == 0
+        assert "Not found or not linked" in result.stdout
+
     def test_import_dedup(self, tmp_path):
         """Importing the same files twice should produce 0 new on second run."""
         db_path = tmp_path / "test.db"
