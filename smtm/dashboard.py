@@ -725,8 +725,6 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
         <div class="form-row">
             <input type="text" id="pairsSearch" placeholder="Search pairs..." style="width:250px">
         </div>
-        <button class="btn btn-outline btn-sm" id="renormalizeBtn" style="margin-bottom:8px">Apply Pairs to All Transactions</button>
-        <span id="renormalizeResult" style="font-size:12px;color:#94a3b8"></span>
         <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Raw Name</th><th>Normalized</th><th></th></tr></thead><tbody id="pairsBody"></tbody></table></div>
         <h3 style="margin-top:16px;font-size:14px">Suggested Pairs <span id="suggestedPairsCount" style="font-size:12px;color:#94a3b8"></span></h3>
         <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Fuzzy-matched store names that look like the same merchant</p>
@@ -1128,9 +1126,8 @@ const App = {
 
     async categorizeStore(store, category) {
         if (!category) return;
-        await apiPost('/api/rules', {pattern: store, category, match_type: 'exact'});
-        await apiPost('/api/recategorize', {});
-        toast(`Categorized "${store}" as ${category}`);
+        const data = await apiPost('/api/rules', {pattern: store, category, match_type: 'exact'});
+        toast(`"${store}" → ${category} (${data.updated || 0} transactions updated)`);
         await this.refresh();
     },
 
@@ -1149,9 +1146,8 @@ const App = {
 
     async applySuggestion(idx) {
         const s = this.data.suggestions[idx];
-        await apiPost('/api/rules', {pattern: s.store, category: s.category, match_type: 'exact'});
-        await apiPost('/api/recategorize', {});
-        toast(`Applied: ${s.store} → ${s.category}`);
+        const data = await apiPost('/api/rules', {pattern: s.store, category: s.category, match_type: 'exact'});
+        toast(`${s.store} → ${s.category} (${data.updated || 0} transactions updated)`);
         await this.refresh();
     },
 
@@ -1238,20 +1234,14 @@ const App = {
         const raw = input.dataset.raw;
         const norm = input.value.trim();
         if (!norm) return;
-        await apiPost('/api/store-pairs', {raw_name: raw, normalized_name: norm});
-        toast(`Updated: ${raw} -> ${norm}`);
+        const data = await apiPost('/api/store-pairs', {raw_name: raw, normalized_name: norm});
+        toast(`${raw} -> ${norm} (${data.normalized} normalized, ${data.recategorized} recategorized)`);
         await this.refresh();
     },
 
     async deletePair(raw) {
         await apiPost('/api/store-pairs/delete', {raw_name: raw});
         toast(`Removed pair: ${raw}`);
-        await this.refresh();
-    },
-
-    async renormalizeAll() {
-        const data = await apiPost('/api/renormalize');
-        document.getElementById('renormalizeResult').textContent = `Updated ${data.normalized} transactions, re-categorized ${data.recategorized}`;
         await this.refresh();
     },
 
@@ -1271,20 +1261,23 @@ const App = {
         const s = this._discoveredStorePairs[idx];
         const edited = document.getElementById(`sugNorm_${idx}`).value.trim();
         const normalized = edited || s.suggested_normalized;
-        await apiPost('/api/store-pairs', {raw_name: s.raw, normalized_name: normalized});
-        toast(`Paired: ${s.raw} -> ${normalized}`);
+        const data = await apiPost('/api/store-pairs', {raw_name: s.raw, normalized_name: normalized});
+        toast(`${s.raw} -> ${normalized} (${data.normalized} normalized, ${data.recategorized} recategorized)`);
         await this.refresh();
     },
 
     async acceptAllStorePairs() {
         if (!this._discoveredStorePairs || !this._discoveredStorePairs.length) return;
+        let totalNorm = 0, totalRecat = 0;
         for (let i = 0; i < this._discoveredStorePairs.length; i++) {
             const s = this._discoveredStorePairs[i];
             const el = document.getElementById(`sugNorm_${i}`);
             const normalized = (el && el.value.trim()) || s.suggested_normalized;
-            await apiPost('/api/store-pairs', {raw_name: s.raw, normalized_name: normalized});
+            const data = await apiPost('/api/store-pairs', {raw_name: s.raw, normalized_name: normalized});
+            totalNorm += data.normalized || 0;
+            totalRecat += data.recategorized || 0;
         }
-        toast(`Accepted ${this._discoveredStorePairs.length} pairs`);
+        toast(`Accepted ${this._discoveredStorePairs.length} pairs (${totalNorm} normalized, ${totalRecat} recategorized)`);
         document.getElementById('suggestedPairsSection').classList.add('hidden');
         await this.refresh();
     },
@@ -1305,30 +1298,34 @@ const App = {
     async consolidateDuplicate(idx) {
         const d = this._duplicates[idx];
         const target = document.getElementById(`dupName_${idx}`).value.trim() || d.suggested_name;
+        let totalNorm = 0, totalRecat = 0;
         for (const v of d.variants) {
             if (v.name !== target) {
-                await apiPost('/api/store-pairs', {raw_name: v.name, normalized_name: target});
+                const data = await apiPost('/api/store-pairs', {raw_name: v.name, normalized_name: target});
+                totalNorm += data.normalized || 0;
+                totalRecat += data.recategorized || 0;
             }
         }
-        toast(`Merged ${d.variants.length} variants -> ${target}`);
-        await apiPost('/api/recategorize');
+        toast(`Merged ${d.variants.length} variants -> ${target} (${totalNorm} normalized, ${totalRecat} recategorized)`);
         await this.refresh();
     },
 
     async consolidateAllDuplicates() {
         if (!this._duplicates || !this._duplicates.length) return;
+        let totalNorm = 0, totalRecat = 0;
         for (let i = 0; i < this._duplicates.length; i++) {
             const d = this._duplicates[i];
             const el = document.getElementById(`dupName_${i}`);
             const target = (el && el.value.trim()) || d.suggested_name;
             for (const v of d.variants) {
                 if (v.name !== target) {
-                    await apiPost('/api/store-pairs', {raw_name: v.name, normalized_name: target});
+                    const data = await apiPost('/api/store-pairs', {raw_name: v.name, normalized_name: target});
+                    totalNorm += data.normalized || 0;
+                    totalRecat += data.recategorized || 0;
                 }
             }
         }
-        toast(`Consolidated ${this._duplicates.length} groups`);
-        await apiPost('/api/recategorize');
+        toast(`Consolidated ${this._duplicates.length} groups (${totalNorm} normalized, ${totalRecat} recategorized)`);
         document.getElementById('duplicatesSection').classList.add('hidden');
         await this.refresh();
     },
@@ -1671,9 +1668,8 @@ document.getElementById('addRuleBtn').addEventListener('click', async () => {
     const cat = document.getElementById('newRuleCat').value;
     const type = document.getElementById('newRuleType').value;
     if (!pattern || !cat) return;
-    await apiPost('/api/rules', {pattern, category: cat, match_type: type});
-    await apiPost('/api/recategorize', {});
-    toast(`Rule added: ${pattern} → ${cat}`);
+    const data = await apiPost('/api/rules', {pattern, category: cat, match_type: type});
+    toast(`Rule added: ${pattern} → ${cat} (${data.updated || 0} transactions updated)`);
     document.getElementById('newRulePattern').value = '';
     await App.refresh();
 });
@@ -1683,8 +1679,8 @@ document.getElementById('addPairBtn').addEventListener('click', async () => {
     const raw = document.getElementById('newPairRaw').value.trim();
     const norm = document.getElementById('newPairNorm').value.trim();
     if (!raw || !norm) return;
-    await apiPost('/api/store-pairs', {raw_name: raw, normalized_name: norm});
-    toast(`Pair added: ${raw} → ${norm}`);
+    const data = await apiPost('/api/store-pairs', {raw_name: raw, normalized_name: norm});
+    toast(`${raw} → ${norm} (${data.normalized || 0} normalized, ${data.recategorized || 0} recategorized)`);
     document.getElementById('newPairRaw').value = '';
     document.getElementById('newPairNorm').value = '';
     await App.refresh();
@@ -1695,7 +1691,6 @@ document.getElementById('discoverStorePairsBtn').addEventListener('click', () =>
 document.getElementById('acceptAllPairsBtn').addEventListener('click', () => App.acceptAllStorePairs());
 document.getElementById('detectDuplicatesBtn').addEventListener('click', () => App.detectDuplicates());
 document.getElementById('consolidateAllBtn').addEventListener('click', () => App.consolidateAllDuplicates());
-document.getElementById('renormalizeBtn').addEventListener('click', () => App.renormalizeAll());
 
 // --- Add reimburser ---
 document.getElementById('addReimburserBtn').addEventListener('click', async () => {

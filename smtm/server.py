@@ -523,7 +523,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._error(400, "pattern and category required")
                 return
             self.db.add_category_rule(pattern, category, match_type)
-            self._json_response({"ok": True})
+            cat_db = self.db.load_category_db()
+            updated = self.db.recategorize_all(cat_db)
+            self._json_response({"ok": True, "updated": updated})
         elif path == "/api/store-pairs":
             data = self._read_json_body()
             raw = data.get("raw_name", "")
@@ -532,7 +534,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._error(400, "raw_name and normalized_name required")
                 return
             self.db.add_store_pair(raw, norm)
-            self._json_response({"ok": True})
+            normalized = self.db.renormalize_all()
+            cat_db = self.db.load_category_db()
+            recategorized = self.db.recategorize_all(cat_db)
+            self._json_response(
+                {"ok": True, "normalized": normalized, "recategorized": recategorized}
+            )
         elif path == "/api/store-pairs/delete":
             data = self._read_json_body()
             raw = data.get("raw_name", "")
@@ -541,13 +548,6 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.db.remove_store_pair(raw)
             self._json_response({"ok": True})
-        elif path == "/api/renormalize":
-            updated = self.db.renormalize_all()
-            cat_db = self.db.load_category_db()
-            recategorized = self.db.recategorize_all(cat_db)
-            self._json_response(
-                {"ok": True, "normalized": updated, "recategorized": recategorized}
-            )
         elif path == "/api/budgets":
             data = self._read_json_body()
             month = data.get("month", "")
