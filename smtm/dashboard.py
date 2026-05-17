@@ -605,6 +605,7 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
     </div>
     <div id="anomaliesSection" class="section hidden">
         <h2>Anomalies <span style="font-size:12px;color:#fbbf24">(transactions &gt; 2x category average)</span></h2>
+        <input type="text" id="anomalySearch" placeholder="Search by store or category..." style="width:250px;margin-bottom:12px;background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:6px 12px;border-radius:6px;font-size:13px">
         <div id="anomaliesList"></div>
     </div>
 </div>
@@ -969,19 +970,22 @@ const App = {
     },
 
     _anomalyPage: 5,
+    _anomalyFilter: '',
     renderAnomalies() {
         const sec = document.getElementById('anomaliesSection');
         const list = document.getElementById('anomaliesList');
         if (!this.data.anomalies.length) { sec.classList.add('hidden'); return; }
         sec.classList.remove('hidden');
-        const showing = this.data.anomalies.slice(0, this._anomalyPage);
-        const hasMore = this.data.anomalies.length > this._anomalyPage;
-        list.innerHTML = showing.map(a => `
+        const q = this._anomalyFilter.toLowerCase();
+        const filtered = q ? this.data.anomalies.filter(a => a.store.toLowerCase().includes(q) || a.category.toLowerCase().includes(q)) : this.data.anomalies;
+        const showing = filtered.slice(0, this._anomalyPage);
+        const hasMore = filtered.length > this._anomalyPage;
+        list.innerHTML = (filtered.length === 0 ? '<p style="color:#94a3b8;font-size:13px">No matching anomalies</p>' : showing.map(a => `
             <div class="anomaly-card">
                 <div><strong>${a.store}</strong> · ${a.date} · ${catBadge(a.category)}<br><span style="color:#94a3b8;font-size:12px">Avg: $${a.category_avg.toLocaleString()}</span></div>
                 <div style="text-align:right"><div class="mult">${a.multiplier}x</div><div style="color:#f87171;font-weight:700">$${a.amount.toLocaleString()}</div></div>
             </div>
-        `).join('') + (hasMore ? `<button class="btn btn-sm btn-outline" onclick="App.showMoreAnomalies()" style="margin-top:8px">Show More (${this.data.anomalies.length - this._anomalyPage} remaining)</button>` : '');
+        `).join('')) + (hasMore ? `<button class="btn btn-sm btn-outline" onclick="App.showMoreAnomalies()" style="margin-top:8px">Show More (${filtered.length - this._anomalyPage} remaining)</button>` : '');
     },
     showMoreAnomalies() {
         this._anomalyPage += 10;
@@ -1557,6 +1561,9 @@ document.querySelectorAll('#txnTable th[data-col]').forEach(th => {
 // --- Filter listeners ---
 ['searchInput','categoryFilter','monthFilter','typeFilter','minAmount','maxAmount','dateFrom','dateTo']
     .forEach(id => document.getElementById(id).addEventListener('input', () => App.renderTable()));
+
+// --- Anomaly search ---
+document.getElementById('anomalySearch').addEventListener('input', e => { App._anomalyFilter = e.target.value; App._anomalyPage = 5; App.renderAnomalies(); });
 
 // --- Budget month change ---
 document.getElementById('budgetMonth').addEventListener('change', e => App.renderBudgetChart(e.target.value));
