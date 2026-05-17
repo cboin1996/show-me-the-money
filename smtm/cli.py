@@ -306,6 +306,51 @@ def cmd_delete(args):
     db.close()
 
 
+def cmd_stores(args):
+    db = get_db(args)
+    stores = db.get_distinct_stores()
+    pairs = db.get_store_pairs()
+    paired_raw = {k.lower() for k in pairs}
+
+    if args.stores_action == "list":
+        expenses = stores["expenses"]
+        unpaired = [
+            s for s in expenses if not s["has_pair"] and s["raw"] != s["normalized"]
+        ]
+        print(f"  {len(expenses)} expense stores, {len(unpaired)} unpaired\n")
+        if args.unpaired:
+            print(f"  {'Store':<40} {'Count':<6} {'Category'}")
+            print(f"  {'-'*40} {'-'*6} {'-'*15}")
+            for s in unpaired[:50]:
+                print(f"  {s['raw']:<40} {s['count']:<6} {s['category'] or '-'}")
+        else:
+            print(f"  {'Raw':<35} {'Normalized':<25} {'Cat':<15} {'#'}")
+            print(f"  {'-'*35} {'-'*25} {'-'*15} {'-'*3}")
+            for s in expenses[:50]:
+                paired = "*" if s["has_pair"] else " "
+                print(
+                    f" {paired}{s['raw']:<35} {s['normalized']:<25} "
+                    f"{s['category'] or '-':<15} {s['count']}"
+                )
+    elif args.stores_action == "discover":
+        suggestions = db.discover_store_pairs()
+        if not suggestions:
+            print("  No similar unpaired stores found.")
+        else:
+            print(f"  {len(suggestions)} suggested pairs:\n")
+            print(f"  {'Raw Name':<40} {'Suggested Normalized':<30} {'Txns'}")
+            print(f"  {'-'*40} {'-'*30} {'-'*4}")
+            for s in suggestions[:30]:
+                print(
+                    f"  {s['raw']:<40} {s['suggested_normalized']:<30} " f"{s['count']}"
+                )
+            if args.apply:
+                for s in suggestions:
+                    db.add_store_pair(s["raw"], s["suggested_normalized"])
+                print(f"\n  Applied {len(suggestions)} store pairs.")
+    db.close()
+
+
 def cmd_reimburse(args):
     db = get_db(args)
 
@@ -452,6 +497,16 @@ def main():
     # history
     sub.add_parser("history", help="Show import history")
 
+    # stores
+    st = sub.add_parser("stores", help="View and manage store names")
+    st_sub = st.add_subparsers(dest="stores_action")
+    st_list = st_sub.add_parser("list", help="List all stores")
+    st_list.add_argument(
+        "--unpaired", action="store_true", help="Only show unpaired stores"
+    )
+    st_disc = st_sub.add_parser("discover", help="Fuzzy-match stores to suggest pairs")
+    st_disc.add_argument("--apply", action="store_true", help="Apply discovered pairs")
+
     # delete
     dlt = sub.add_parser("delete", help="Soft-delete transactions")
     dlt.add_argument("uuids", nargs="+", help="Transaction UUIDs")
@@ -505,6 +560,7 @@ def main():
         "report": cmd_report,
         "budget": cmd_budget,
         "history": cmd_history,
+        "stores": cmd_stores,
         "delete": cmd_delete,
         "reimburse": cmd_reimburse,
         "serve": cmd_serve,

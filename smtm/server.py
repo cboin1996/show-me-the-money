@@ -473,6 +473,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json_response({"rules": self.db.get_category_rules()})
         elif path == "/api/store-pairs":
             self._json_response({"store_pairs": self.db.get_store_pairs()})
+        elif path == "/api/store-pairs/discover":
+            self._json_response({"suggestions": self.db.discover_store_pairs()})
+        elif path == "/api/stores":
+            self._json_response(self.db.get_distinct_stores())
         elif path == "/api/suggest":
             self._json_response({"suggestions": compute_suggestions(self.db)})
         elif path == "/api/anomalies":

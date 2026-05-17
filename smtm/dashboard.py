@@ -704,7 +704,7 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
     <div class="section">
         <h2>Category Rules <span id="rulesCount" style="font-size:12px;color:#94a3b8"></span></h2>
         <div class="form-row">
-            <input type="text" id="newRulePattern" placeholder="Pattern (store name)">
+            <input type="text" id="newRulePattern" placeholder="Pattern (store name)" list="dl-expense-stores">
             <select id="newRuleCat"></select>
             <select id="newRuleType"><option value="exact">exact</option><option value="substring">substring</option></select>
             <button class="btn" id="addRuleBtn">Add Rule</button>
@@ -717,19 +717,26 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
     <div class="section">
         <h2>Store Pairs <span id="pairsCount" style="font-size:12px;color:#94a3b8"></span></h2>
         <div class="form-row">
-            <input type="text" id="newPairRaw" placeholder="Raw name">
-            <input type="text" id="newPairNorm" placeholder="Normalized name">
+            <input type="text" id="newPairRaw" placeholder="Raw name" list="dl-expense-raw">
+            <input type="text" id="newPairNorm" placeholder="Normalized name" list="dl-all-stores">
             <button class="btn" id="addPairBtn">Add Pair</button>
         </div>
         <div class="form-row">
             <input type="text" id="pairsSearch" placeholder="Search pairs..." style="width:250px">
         </div>
         <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Raw Name</th><th>Normalized</th></tr></thead><tbody id="pairsBody"></tbody></table></div>
+        <h3 style="margin-top:16px;font-size:14px">Suggested Pairs <span id="suggestedPairsCount" style="font-size:12px;color:#94a3b8"></span></h3>
+        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Fuzzy-matched store names that look like the same merchant</p>
+        <button class="btn btn-outline btn-sm" id="discoverStorePairsBtn" style="margin-bottom:8px">Discover Unpaired Stores</button>
+        <div id="suggestedPairsSection" class="hidden">
+            <div class="scroll-table" style="max-height:250px"><table><thead><tr><th>Raw Name</th><th>Suggested Normal</th><th>Txns</th><th></th></tr></thead><tbody id="suggestedPairsBody"></tbody></table></div>
+            <button class="btn btn-success btn-sm" id="acceptAllPairsBtn" style="margin-top:8px">Accept All</button>
+        </div>
     </div>
     <div class="section">
         <h2>Reimbursers <span id="reimbursersCount" style="font-size:12px;color:#94a3b8"></span></h2>
         <div class="form-row">
-            <input type="text" id="newReimburserPattern" placeholder="Pattern (e.g. friend name)">
+            <input type="text" id="newReimburserPattern" placeholder="Pattern (e.g. friend name)" list="dl-income-stores">
             <input type="text" id="newReimburserLabel" placeholder="Label (optional)">
             <select id="newReimburserType"><option value="substring">substring</option><option value="exact">exact</option></select>
             <button class="btn" id="addReimburserBtn">Add Reimburser</button>
@@ -738,8 +745,8 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
         <h3 style="margin-top:16px;font-size:14px">Reimburser Pairs <span id="reimbPairsCount" style="font-size:12px;color:#94a3b8"></span></h3>
         <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Link a reimburser to the expense they typically cover</p>
         <div class="form-row">
-            <input type="text" id="newPairReimburser" placeholder="Reimburser pattern (e.g. canada life)">
-            <input type="text" id="newPairExpense" placeholder="Expense pattern (e.g. humanity wellness)">
+            <input type="text" id="newPairReimburser" placeholder="Reimburser pattern (e.g. canada life)" list="dl-income-stores">
+            <input type="text" id="newPairExpense" placeholder="Expense pattern (e.g. humanity wellness)" list="dl-expense-stores">
             <button class="btn" id="addReimbPairBtn">Add Pair</button>
             <button class="btn btn-outline" id="discoverPairsBtn">Discover from History</button>
         </div>
@@ -789,6 +796,11 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
     </div>
 </div>
 
+<datalist id="dl-expense-stores"></datalist>
+<datalist id="dl-expense-raw"></datalist>
+<datalist id="dl-income-stores"></datalist>
+<datalist id="dl-all-stores"></datalist>
+
 <script>
 const COLORS = """
         + colors_json
@@ -822,7 +834,7 @@ const App = {
     _txnTotal: 0,
 
     async init() {
-        const [txns, overview, budgets, rules, pairs, history, uncat, suggest, deleted, reimbursers, pendingReimb, reimburserPairs] = await Promise.all([
+        const [txns, overview, budgets, rules, pairs, history, uncat, suggest, deleted, reimbursers, pendingReimb, reimburserPairs, stores] = await Promise.all([
             api(`/api/transactions?offset=0&limit=${this._txnPageSize}`),
             api('/api/overview'),
             api('/api/budgets'),
@@ -830,7 +842,7 @@ const App = {
             api('/api/uncategorized'), api('/api/suggest'),
             api('/api/transactions/deleted'),
             api('/api/reimbursers'), api('/api/reimbursements/pending'),
-            api('/api/reimburser-pairs'),
+            api('/api/reimburser-pairs'), api('/api/stores'),
         ]);
         this.data.transactions = txns.transactions || [];
         this._txnTotal = txns.total || this.data.transactions.length;
@@ -848,7 +860,10 @@ const App = {
         this.data.reimbursers = reimbursers.reimbursers || [];
         this.data.pendingReimb = pendingReimb.pending || [];
         this.data.reimburserPairs = reimburserPairs.pairs || [];
+        this.data.expenseStores = stores.expenses || [];
+        this.data.incomeStores = stores.income || [];
         this.renderAll();
+        this.populateDataLists();
     },
 
     async loadMoreTransactions() {
@@ -858,6 +873,17 @@ const App = {
         const data = await api(`/api/transactions?offset=${offset}&limit=${this._txnPageSize}`);
         this.data.transactions = this.data.transactions.concat(data.transactions || []);
         this.renderTable();
+    },
+
+    populateDataLists() {
+        const expNames = [...new Set(this.data.expenseStores.map(s => s.normalized))];
+        const expRaw = [...new Set(this.data.expenseStores.map(s => s.raw))];
+        const incNames = [...new Set(this.data.incomeStores.map(s => s.normalized))];
+        const allNorm = [...new Set([...expNames, ...incNames])];
+        document.getElementById('dl-expense-stores').innerHTML = expNames.slice(0,200).map(s => `<option value="${s}">`).join('');
+        document.getElementById('dl-expense-raw').innerHTML = expRaw.slice(0,200).map(s => `<option value="${s}">`).join('');
+        document.getElementById('dl-income-stores').innerHTML = incNames.slice(0,200).map(s => `<option value="${s}">`).join('');
+        document.getElementById('dl-all-stores').innerHTML = allNorm.slice(0,300).map(s => `<option value="${s}">`).join('');
     },
 
     async refresh() { await this.init(); },
@@ -1182,6 +1208,35 @@ const App = {
         body.innerHTML = entries.map(([raw, norm]) =>
             `<tr><td>${raw}</td><td>${norm}</td></tr>`
         ).join('');
+    },
+
+    async discoverStorePairs() {
+        const data = await api('/api/store-pairs/discover');
+        const suggestions = data.suggestions || [];
+        if (!suggestions.length) { toast('No unpaired stores found'); return; }
+        this._discoveredStorePairs = suggestions;
+        document.getElementById('suggestedPairsCount').textContent = `(${suggestions.length})`;
+        document.getElementById('suggestedPairsBody').innerHTML = suggestions.map((s, i) =>
+            `<tr><td>${s.raw}</td><td>${s.suggested_normalized}</td><td>${s.count}</td><td><button class="btn btn-sm btn-success" onclick="App.acceptStorePair(${i})">Accept</button></td></tr>`
+        ).join('');
+        document.getElementById('suggestedPairsSection').classList.remove('hidden');
+    },
+
+    async acceptStorePair(idx) {
+        const s = this._discoveredStorePairs[idx];
+        await apiPost('/api/store-pairs', {raw_name: s.raw, normalized_name: s.suggested_normalized});
+        toast(`Paired: ${s.raw} -> ${s.suggested_normalized}`);
+        await this.refresh();
+    },
+
+    async acceptAllStorePairs() {
+        if (!this._discoveredStorePairs || !this._discoveredStorePairs.length) return;
+        for (const s of this._discoveredStorePairs) {
+            await apiPost('/api/store-pairs', {raw_name: s.raw, normalized_name: s.suggested_normalized});
+        }
+        toast(`Accepted ${this._discoveredStorePairs.length} pairs`);
+        document.getElementById('suggestedPairsSection').classList.add('hidden');
+        await this.refresh();
     },
 
     renderReimbursers() {
@@ -1537,6 +1592,10 @@ document.getElementById('addPairBtn').addEventListener('click', async () => {
     document.getElementById('newPairNorm').value = '';
     await App.refresh();
 });
+
+// --- Discover store pairs ---
+document.getElementById('discoverStorePairsBtn').addEventListener('click', () => App.discoverStorePairs());
+document.getElementById('acceptAllPairsBtn').addEventListener('click', () => App.acceptAllStorePairs());
 
 // --- Add reimburser ---
 document.getElementById('addReimburserBtn').addEventListener('click', async () => {

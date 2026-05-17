@@ -478,6 +478,48 @@ class TestSQLiteDB:
         assert discovered[0]["expense_pattern"] == "wellness spa"
         assert discovered[0]["link_count"] == 1
 
+    def test_get_distinct_stores(self, sqlite_db):
+        txn1 = Transaction(
+            date=date(2026, 1, 1),
+            amount=50.0,
+            store_raw="walmart #123",
+            store_normalized="walmart",
+            txn_type=TxnType.EXPENSE,
+            source_file="test.csv",
+        )
+        txn2 = Transaction(
+            date=date(2026, 1, 2),
+            amount=5000.0,
+            store_raw="employer inc",
+            store_normalized="employer inc",
+            txn_type=TxnType.INCOME,
+            source_file="test.csv",
+        )
+        sqlite_db.insert_transaction(txn1)
+        sqlite_db.insert_transaction(txn2)
+        stores = sqlite_db.get_distinct_stores()
+        assert len(stores["expenses"]) >= 1
+        assert len(stores["income"]) >= 1
+        assert any(s["raw"] == "walmart #123" for s in stores["expenses"])
+
+    def test_discover_store_pairs(self, sqlite_db):
+        # Insert transactions with similar store names
+        for i in range(3):
+            sqlite_db.insert_transaction(
+                Transaction(
+                    date=date(2026, 1, i + 1),
+                    amount=10.0 + i,
+                    store_raw=f"walmart #{i}",
+                    store_normalized=f"walmart #{i}",
+                    txn_type=TxnType.EXPENSE,
+                    source_file=f"f{i}.csv",
+                )
+            )
+        suggestions = sqlite_db.discover_store_pairs()
+        assert len(suggestions) >= 1
+        assert all("raw" in s for s in suggestions)
+        assert all("suggested_normalized" in s for s in suggestions)
+
 
 # --- Adapter tests ---
 
@@ -925,6 +967,30 @@ class TestEndToEnd:
         assert result.returncode == 0
         assert "Pair removed" in result.stdout
 
+    def test_cli_stores(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [
+            sys.executable,
+            "-m",
+            "smtm.cli",
+            "--db-path",
+            str(db_path),
+            "--csv-dir",
+            str(FIXTURES),
+        ]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        # List
+        result = subprocess.run(
+            base + ["stores", "list"], capture_output=True, text=True
+        )
+        assert result.returncode == 0
+        assert "expense stores" in result.stdout
+        # Discover
+        result = subprocess.run(
+            base + ["stores", "discover"], capture_output=True, text=True
+        )
+        assert result.returncode == 0
+
     def test_import_dedup(self, tmp_path):
         """Importing the same files twice should produce 0 new on second run."""
         db_path = tmp_path / "test.db"
@@ -1267,6 +1333,23 @@ class TestServer:
         )
         data = _get(url, "/api/store-pairs")
         assert data["store_pairs"]["petro-68"] == "petro canada"
+
+    def test_api_store_pairs_discover(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/store-pairs/discover")
+        assert "suggestions" in data
+        assert isinstance(data["suggestions"], list)
+
+    def test_api_stores(self, server_fixture):
+        url = server_fixture["base_url"]
+        data = _get(url, "/api/stores")
+        assert "expenses" in data
+        assert "income" in data
+        assert len(data["expenses"]) > 0
+        assert len(data["income"]) > 0
+        assert "raw" in data["expenses"][0]
+        assert "normalized" in data["expenses"][0]
+        assert "count" in data["expenses"][0]
 
     def test_api_history(self, server_fixture):
         url = server_fixture["base_url"]

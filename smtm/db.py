@@ -323,6 +323,96 @@ class Database:
                 (raw_name, normalized_name),
             )
 
+    def get_distinct_stores(self) -> dict:
+        """Get all unique store names with their pair/category status."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT store_raw, store_normalized, category, txn_type, "
+                "COUNT(*) as count FROM transactions "
+                "WHERE is_deleted = 0 GROUP BY store_raw, txn_type "
+                "ORDER BY count DESC"
+            ).fetchall()
+        pairs = self.get_store_pairs()
+        expense_stores = []
+        income_stores = []
+        for r in rows:
+            entry = {
+                "raw": r["store_raw"],
+                "normalized": r["store_normalized"] or r["store_raw"],
+                "category": r["category"] or "",
+                "count": r["count"],
+                "has_pair": r["store_raw"].lower() in {k.lower() for k in pairs},
+            }
+            if r["txn_type"] == "income":
+                income_stores.append(entry)
+            else:
+                expense_stores.append(entry)
+        return {"expenses": expense_stores, "income": income_stores}
+
+    def discover_store_pairs(self) -> list[dict]:
+        """Fuzzy-match raw store names to suggest normalization pairs."""
+        from difflib import SequenceMatcher
+
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT store_raw, store_normalized, COUNT(*) as count "
+                "FROM transactions WHERE is_deleted = 0 AND txn_type = 'expense' "
+                "GROUP BY store_raw ORDER BY count DESC"
+            ).fetchall()
+        existing_pairs = self.get_store_pairs()
+        already_paired = {k.lower() for k in existing_pairs}
+
+        stores = [
+            {
+                "raw": r["store_raw"],
+                "norm": r["store_normalized"] or r["store_raw"],
+                "count": r["count"],
+            }
+            for r in rows
+            if r["store_raw"].lower() not in already_paired
+        ]
+        if len(stores) < 2:
+            return []
+
+        suggestions = []
+        seen = set()
+        for i, s in enumerate(stores):
+            if s["raw"] in seen:
+                continue
+            group = [s]
+            s_clean = s["norm"].lower()
+            for j in range(i + 1, len(stores)):
+                other = stores[j]
+                if other["raw"] in seen:
+                    continue
+                o_clean = other["norm"].lower()
+                # Check prefix match (first 5+ chars) or high sequence similarity
+                prefix_len = min(len(s_clean), len(o_clean), 8)
+                if prefix_len >= 4 and s_clean[:prefix_len] == o_clean[:prefix_len]:
+                    group.append(other)
+                    seen.add(other["raw"])
+                elif len(s_clean) >= 4 and len(o_clean) >= 4:
+                    ratio = SequenceMatcher(None, s_clean, o_clean).ratio()
+                    if ratio >= 0.75:
+                        group.append(other)
+                        seen.add(other["raw"])
+            if len(group) > 1:
+                # Suggest normalizing to the most common variant
+                best = max(group, key=lambda g: g["count"])
+                for g in group:
+                    if g["raw"] != best["raw"]:
+                        suggestions.append(
+                            {
+                                "raw": g["raw"],
+                                "suggested_normalized": best["norm"],
+                                "similarity_group": best["norm"],
+                                "count": g["count"],
+                            }
+                        )
+                seen.add(s["raw"])
+        suggestions.sort(key=lambda x: -x["count"])
+        return suggestions
+
     # -- Reimbursers --
 
     def get_reimbursers(self) -> list[dict]:
