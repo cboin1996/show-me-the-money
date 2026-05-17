@@ -294,20 +294,33 @@ class Database:
         if not pairs:
             return 0
         pairs_lower = {k.lower(): v for k, v in pairs.items()}
+
+        def resolve(name):
+            visited = set()
+            while name.lower() in pairs_lower and name.lower() not in visited:
+                visited.add(name.lower())
+                name = pairs_lower[name.lower()]
+            return name
+
         rows = self.conn.execute(
-            "SELECT uuid, store_raw FROM transactions WHERE is_deleted = 0"
+            "SELECT uuid, store_raw, store_normalized FROM transactions "
+            "WHERE is_deleted = 0"
         ).fetchall()
         updated = 0
         with self.conn:
             for row in rows:
                 raw_lower = row["store_raw"].lower().strip()
-                if raw_lower in pairs_lower:
-                    new_norm = pairs_lower[raw_lower]
-                    self.conn.execute(
-                        "UPDATE transactions SET store_normalized = ? WHERE uuid = ?",
-                        (new_norm, row["uuid"]),
-                    )
-                    updated += 1
+                norm_lower = (row["store_normalized"] or "").lower().strip()
+                match = pairs_lower.get(raw_lower) or pairs_lower.get(norm_lower)
+                if match:
+                    final = resolve(match)
+                    if final != (row["store_normalized"] or ""):
+                        self.conn.execute(
+                            "UPDATE transactions SET store_normalized = ? "
+                            "WHERE uuid = ?",
+                            (final, row["uuid"]),
+                        )
+                        updated += 1
         return updated
 
     def remove_store_pair(self, raw_name: str) -> bool:
