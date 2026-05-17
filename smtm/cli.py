@@ -358,24 +358,27 @@ def cmd_stores(args):
     elif args.stores_action == "duplicates":
         dupes = db.detect_duplicates()
         if not dupes:
-            print("  No duplicates found.")
+            print("  No duplicate store names found.")
         else:
             print(f"  {len(dupes)} duplicate groups:\n")
-            print(f"  {'Date':<12} {'Store':<30} {'Amount':<10} {'Count':<5} Sources")
-            print(f"  {'-'*12} {'-'*30} {'-'*10} {'-'*5} {'-'*20}")
+            print(f"  {'Suggested Name':<30} {'Variants':<40} {'Txns'}")
+            print(f"  {'-'*30} {'-'*40} {'-'*4}")
             for d in dupes[:30]:
-                sources = ", ".join(set(e["source_file"] for e in d["entries"]))
+                variants = ", ".join(v["name"] for v in d["variants"])
                 print(
-                    f"  {d['date']:<12} {d['store']:<30} "
-                    f"${d['amount']:<9.2f} {d['count']:<5} {sources}"
+                    f"  {d['suggested_name']:<30} {variants:<40} " f"{d['total_txns']}"
                 )
-            if args.delete:
-                deleted = 0
+            if args.consolidate:
                 for d in dupes:
-                    for e in d["entries"][1:]:
-                        db.soft_delete(e["uuid"])
-                        deleted += 1
-                print(f"\n  Soft-deleted {deleted} duplicate transactions.")
+                    for v in d["variants"]:
+                        if v["name"] != d["suggested_name"]:
+                            db.add_store_pair(v["name"], d["suggested_name"])
+                cat_db = db.load_category_db()
+                updated = db.recategorize_all(cat_db)
+                print(
+                    f"\n  Consolidated {len(dupes)} groups. "
+                    f"Re-categorized {updated} transactions."
+                )
     db.close()
 
 
@@ -547,9 +550,13 @@ def main():
     )
     st_disc = st_sub.add_parser("discover", help="Fuzzy-match stores to suggest pairs")
     st_disc.add_argument("--apply", action="store_true", help="Apply discovered pairs")
-    st_dupes = st_sub.add_parser("duplicates", help="Detect duplicate transactions")
+    st_dupes = st_sub.add_parser(
+        "duplicates", help="Detect duplicate normalized store names"
+    )
     st_dupes.add_argument(
-        "--delete", action="store_true", help="Soft-delete duplicates (keeps first)"
+        "--consolidate",
+        action="store_true",
+        help="Create store pairs to merge variants into suggested name",
     )
 
     # recategorize

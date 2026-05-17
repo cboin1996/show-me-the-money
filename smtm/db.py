@@ -414,46 +414,67 @@ class Database:
         return suggestions
 
     def detect_duplicates(self) -> list[dict]:
-        """Find potential duplicate transactions by normalized store + amount + date."""
+        """Find normalized store names that are likely the same merchant via fuzzy match."""
+        from difflib import SequenceMatcher
+
         with self._lock:
             rows = self.conn.execute(
-                "SELECT date, amount, store_normalized, store_raw, uuid, source_file "
-                "FROM transactions WHERE is_deleted = 0 "
-                "ORDER BY date, store_normalized, amount"
+                "SELECT store_normalized, store_raw, COUNT(*) as count, "
+                "SUM(amount) as total FROM transactions "
+                "WHERE is_deleted = 0 AND txn_type = 'expense' "
+                "GROUP BY store_normalized ORDER BY count DESC"
             ).fetchall()
-        groups: dict[tuple, list[dict]] = {}
-        for r in rows:
-            norm = (r["store_normalized"] or r["store_raw"]).lower()
-            key = (r["date"], round(r["amount"], 2), norm)
-            entry = {
-                "uuid": r["uuid"],
-                "date": r["date"],
-                "amount": round(r["amount"], 2),
-                "store_normalized": r["store_normalized"] or r["store_raw"],
-                "store_raw": r["store_raw"],
-                "source_file": r["source_file"],
+        stores = [
+            {
+                "name": r["store_normalized"] or r["store_raw"],
+                "count": r["count"],
+                "total": round(r["total"], 2),
             }
-            if key not in groups:
-                groups[key] = []
-            groups[key].append(entry)
+            for r in rows
+            if r["store_normalized"] or r["store_raw"]
+        ]
+        if len(stores) < 2:
+            return []
+
         duplicates = []
-        for key, entries in groups.items():
-            if len(entries) < 2:
+        seen: set[str] = set()
+        for i, s in enumerate(stores):
+            if s["name"] in seen:
                 continue
-            if (
-                len(set(e["source_file"] for e in entries)) > 1
-                or len(set(e["store_raw"] for e in entries)) > 1
-            ):
+            s_lower = s["name"].lower()
+            group = [s]
+            for j in range(i + 1, len(stores)):
+                other = stores[j]
+                if other["name"] in seen:
+                    continue
+                o_lower = other["name"].lower()
+                # One name contains the other (e.g. "domino's" in "domino's pizza")
+                if s_lower in o_lower or o_lower in s_lower:
+                    group.append(other)
+                    seen.add(other["name"])
+                elif len(s_lower) >= 4 and len(o_lower) >= 4:
+                    ratio = SequenceMatcher(None, s_lower, o_lower).ratio()
+                    if ratio >= 0.8:
+                        group.append(other)
+                        seen.add(other["name"])
+            if len(group) > 1:
+                best = max(group, key=lambda g: g["count"])
                 duplicates.append(
                     {
-                        "date": key[0],
-                        "amount": key[1],
-                        "store": entries[0]["store_normalized"],
-                        "count": len(entries),
-                        "entries": entries,
+                        "suggested_name": best["name"],
+                        "variants": [
+                            {
+                                "name": g["name"],
+                                "count": g["count"],
+                                "total": g["total"],
+                            }
+                            for g in group
+                        ],
+                        "total_txns": sum(g["count"] for g in group),
                     }
                 )
-        duplicates.sort(key=lambda d: -d["count"])
+                seen.add(s["name"])
+        duplicates.sort(key=lambda d: -d["total_txns"])
         return duplicates
 
     # -- Reimbursers --
