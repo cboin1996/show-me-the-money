@@ -725,7 +725,9 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
         <div class="form-row">
             <input type="text" id="pairsSearch" placeholder="Search pairs..." style="width:250px">
         </div>
-        <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Raw Name</th><th>Normalized</th></tr></thead><tbody id="pairsBody"></tbody></table></div>
+        <button class="btn btn-outline btn-sm" id="renormalizeBtn" style="margin-bottom:8px">Apply Pairs to All Transactions</button>
+        <span id="renormalizeResult" style="font-size:12px;color:#94a3b8"></span>
+        <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Raw Name</th><th>Normalized</th><th></th></tr></thead><tbody id="pairsBody"></tbody></table></div>
         <h3 style="margin-top:16px;font-size:14px">Suggested Pairs <span id="suggestedPairsCount" style="font-size:12px;color:#94a3b8"></span></h3>
         <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Fuzzy-matched store names that look like the same merchant</p>
         <button class="btn btn-outline btn-sm" id="discoverStorePairsBtn" style="margin-bottom:8px">Discover Unpaired Stores</button>
@@ -1227,8 +1229,30 @@ const App = {
         document.getElementById('pairsCount').textContent = `(${entries.length}/${Object.keys(pairs).length})`;
         const body = document.getElementById('pairsBody');
         body.innerHTML = entries.map(([raw, norm]) =>
-            `<tr><td>${raw}</td><td>${norm}</td></tr>`
+            `<tr><td style="font-size:12px">${raw}</td><td><input type="text" value="${norm}" data-raw="${raw.replace(/"/g,'&quot;')}" class="pair-norm-input" style="width:100%;background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:4px 8px;border-radius:4px;font-size:12px" list="dl-all-stores"></td><td style="white-space:nowrap"><button class="btn btn-sm btn-success" onclick="App.savePair(this)">Save</button> <button class="btn btn-sm btn-danger" onclick="App.deletePair('${raw.replace(/'/g,"\\'")}')">Del</button></td></tr>`
         ).join('');
+    },
+
+    async savePair(btn) {
+        const input = btn.parentElement.parentElement.querySelector('.pair-norm-input');
+        const raw = input.dataset.raw;
+        const norm = input.value.trim();
+        if (!norm) return;
+        await apiPost('/api/store-pairs', {raw_name: raw, normalized_name: norm});
+        toast(`Updated: ${raw} -> ${norm}`);
+        await this.refresh();
+    },
+
+    async deletePair(raw) {
+        await apiPost('/api/store-pairs/delete', {raw_name: raw});
+        toast(`Removed pair: ${raw}`);
+        await this.refresh();
+    },
+
+    async renormalizeAll() {
+        const data = await apiPost('/api/renormalize');
+        document.getElementById('renormalizeResult').textContent = `Updated ${data.normalized} transactions, re-categorized ${data.recategorized}`;
+        await this.refresh();
     },
 
     async discoverStorePairs() {
@@ -1671,6 +1695,7 @@ document.getElementById('discoverStorePairsBtn').addEventListener('click', () =>
 document.getElementById('acceptAllPairsBtn').addEventListener('click', () => App.acceptAllStorePairs());
 document.getElementById('detectDuplicatesBtn').addEventListener('click', () => App.detectDuplicates());
 document.getElementById('consolidateAllBtn').addEventListener('click', () => App.consolidateAllDuplicates());
+document.getElementById('renormalizeBtn').addEventListener('click', () => App.renormalizeAll());
 
 // --- Add reimburser ---
 document.getElementById('addReimburserBtn').addEventListener('click', async () => {

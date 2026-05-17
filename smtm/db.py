@@ -288,6 +288,35 @@ class Database:
                     updated += 1
         return updated
 
+    def renormalize_all(self) -> int:
+        """Re-apply store pairs to ALL transactions, updating store_normalized."""
+        pairs = self.get_store_pairs()
+        if not pairs:
+            return 0
+        pairs_lower = {k.lower(): v for k, v in pairs.items()}
+        rows = self.conn.execute(
+            "SELECT uuid, store_raw FROM transactions WHERE is_deleted = 0"
+        ).fetchall()
+        updated = 0
+        with self.conn:
+            for row in rows:
+                raw_lower = row["store_raw"].lower().strip()
+                if raw_lower in pairs_lower:
+                    new_norm = pairs_lower[raw_lower]
+                    self.conn.execute(
+                        "UPDATE transactions SET store_normalized = ? WHERE uuid = ?",
+                        (new_norm, row["uuid"]),
+                    )
+                    updated += 1
+        return updated
+
+    def remove_store_pair(self, raw_name: str) -> bool:
+        with self.conn:
+            cursor = self.conn.execute(
+                "DELETE FROM store_pairs WHERE raw_name = ?", (raw_name,)
+            )
+        return cursor.rowcount > 0
+
     # -- Category rules --
 
     def get_category_rules(self) -> list[dict]:

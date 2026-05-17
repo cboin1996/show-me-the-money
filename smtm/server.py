@@ -533,6 +533,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.db.add_store_pair(raw, norm)
             self._json_response({"ok": True})
+        elif path == "/api/store-pairs/delete":
+            data = self._read_json_body()
+            raw = data.get("raw_name", "")
+            if not raw:
+                self._error(400, "raw_name required")
+                return
+            self.db.remove_store_pair(raw)
+            self._json_response({"ok": True})
+        elif path == "/api/renormalize":
+            updated = self.db.renormalize_all()
+            cat_db = self.db.load_category_db()
+            recategorized = self.db.recategorize_all(cat_db)
+            self._json_response(
+                {"ok": True, "normalized": updated, "recategorized": recategorized}
+            )
         elif path == "/api/budgets":
             data = self._read_json_body()
             month = data.get("month", "")
