@@ -733,6 +733,12 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
             <div class="scroll-table" style="max-height:250px"><table><thead><tr><th>Raw Name</th><th>Suggested Normal</th><th>Txns</th><th></th></tr></thead><tbody id="suggestedPairsBody"></tbody></table></div>
             <button class="btn btn-success btn-sm" id="acceptAllPairsBtn" style="margin-top:8px">Accept All</button>
         </div>
+        <h3 style="margin-top:16px;font-size:14px">Duplicate Detection <span id="duplicatesCount" style="font-size:12px;color:#94a3b8"></span></h3>
+        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Transactions with same normalized store, amount, and date from different sources</p>
+        <button class="btn btn-outline btn-sm" id="detectDuplicatesBtn" style="margin-bottom:8px">Detect Duplicates</button>
+        <div id="duplicatesSection" class="hidden">
+            <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Date</th><th>Store</th><th>Amount</th><th>Sources</th><th>Count</th><th></th></tr></thead><tbody id="duplicatesBody"></tbody></table></div>
+        </div>
     </div>
     <div class="section">
         <h2>Reimbursers <span id="reimbursersCount" style="font-size:12px;color:#94a3b8"></span></h2>
@@ -1258,6 +1264,47 @@ const App = {
         await this.refresh();
     },
 
+    async detectDuplicates() {
+        const data = await api('/api/duplicates');
+        const dupes = data.duplicates || [];
+        if (!dupes.length) { toast('No duplicates found'); return; }
+        this._duplicates = dupes;
+        document.getElementById('duplicatesCount').textContent = `(${dupes.length} groups)`;
+        document.getElementById('duplicatesBody').innerHTML = dupes.map((d, i) => {
+            const sources = [...new Set(d.entries.map(e => e.source_file))].join(', ');
+            return `<tr><td>${d.date}</td><td>${d.store}</td><td style="text-align:right">$${d.amount.toFixed(2)}</td><td style="font-size:11px;color:#94a3b8">${sources}</td><td>${d.count}</td><td><button class="btn btn-sm btn-outline" onclick="App.showDuplicateDetail(${i})">Review</button></td></tr>`;
+        }).join('');
+        document.getElementById('duplicatesSection').classList.remove('hidden');
+    },
+
+    showDuplicateDetail(idx) {
+        const d = this._duplicates[idx];
+        const detail = d.entries.map((e, i) =>
+            `<tr><td style="font-size:11px">${e.uuid.slice(0,8)}</td><td>${e.store_raw}</td><td style="font-size:11px;color:#94a3b8">${e.source_file}</td><td>${i > 0 ? `<button class="btn btn-sm btn-danger" onclick="App.deleteDuplicate('${e.uuid}',${idx})">Delete</button>` : '<span style="color:#4ade80;font-size:11px">Keep</span>'}</td></tr>`
+        ).join('');
+        document.getElementById('duplicatesBody').innerHTML = `
+            <tr><td colspan="6" style="padding:0">
+                <div style="background:#0f172a;padding:12px;border-radius:8px;margin:8px 0">
+                    <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">${d.store} · $${d.amount.toFixed(2)} · ${d.date} — ${d.count} entries</p>
+                    <table style="font-size:12px"><thead><tr><th>UUID</th><th>Raw Name</th><th>Source</th><th></th></tr></thead><tbody>${detail}</tbody></table>
+                    <button class="btn btn-sm btn-outline" onclick="App.detectDuplicates()" style="margin-top:8px">Back</button>
+                </div>
+            </td></tr>`;
+    },
+
+    async deleteDuplicate(uuid, idx) {
+        await fetch('/api/transactions/' + uuid, {method:'DELETE'});
+        toast('Deleted duplicate');
+        this._duplicates[idx].entries = this._duplicates[idx].entries.filter(e => e.uuid !== uuid);
+        this._duplicates[idx].count--;
+        if (this._duplicates[idx].count < 2) {
+            this._duplicates.splice(idx, 1);
+            this.detectDuplicates();
+        } else {
+            this.showDuplicateDetail(idx);
+        }
+    },
+
     renderReimbursers() {
         const body = document.getElementById('reimbursersBody');
         document.getElementById('reimbursersCount').textContent = `(${this.data.reimbursers.length})`;
@@ -1618,6 +1665,7 @@ document.getElementById('addPairBtn').addEventListener('click', async () => {
 // --- Discover store pairs ---
 document.getElementById('discoverStorePairsBtn').addEventListener('click', () => App.discoverStorePairs());
 document.getElementById('acceptAllPairsBtn').addEventListener('click', () => App.acceptAllStorePairs());
+document.getElementById('detectDuplicatesBtn').addEventListener('click', () => App.detectDuplicates());
 
 // --- Add reimburser ---
 document.getElementById('addReimburserBtn').addEventListener('click', async () => {

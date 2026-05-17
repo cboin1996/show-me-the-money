@@ -520,6 +520,34 @@ class TestSQLiteDB:
         assert all("raw" in s for s in suggestions)
         assert all("suggested_normalized" in s for s in suggestions)
 
+    def test_detect_duplicates(self, sqlite_db):
+        # Same normalized store, amount, date but different source files
+        sqlite_db.insert_transaction(
+            Transaction(
+                date=date(2026, 3, 1),
+                amount=50.0,
+                store_raw="costco wholesale",
+                store_normalized="costco",
+                txn_type=TxnType.EXPENSE,
+                source_file="visa.csv",
+            )
+        )
+        sqlite_db.insert_transaction(
+            Transaction(
+                date=date(2026, 3, 1),
+                amount=50.0,
+                store_raw="costco",
+                store_normalized="costco",
+                txn_type=TxnType.EXPENSE,
+                source_file="chequing.csv",
+            )
+        )
+        dupes = sqlite_db.detect_duplicates()
+        assert len(dupes) == 1
+        assert dupes[0]["count"] == 2
+        assert dupes[0]["store"] == "costco"
+        assert len(dupes[0]["entries"]) == 2
+
 
 # --- Adapter tests ---
 

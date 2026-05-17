@@ -413,6 +413,49 @@ class Database:
         suggestions.sort(key=lambda x: -x["count"])
         return suggestions
 
+    def detect_duplicates(self) -> list[dict]:
+        """Find potential duplicate transactions by normalized store + amount + date."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT date, amount, store_normalized, store_raw, uuid, source_file "
+                "FROM transactions WHERE is_deleted = 0 "
+                "ORDER BY date, store_normalized, amount"
+            ).fetchall()
+        groups: dict[tuple, list[dict]] = {}
+        for r in rows:
+            norm = (r["store_normalized"] or r["store_raw"]).lower()
+            key = (r["date"], round(r["amount"], 2), norm)
+            entry = {
+                "uuid": r["uuid"],
+                "date": r["date"],
+                "amount": round(r["amount"], 2),
+                "store_normalized": r["store_normalized"] or r["store_raw"],
+                "store_raw": r["store_raw"],
+                "source_file": r["source_file"],
+            }
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(entry)
+        duplicates = []
+        for key, entries in groups.items():
+            if len(entries) < 2:
+                continue
+            if (
+                len(set(e["source_file"] for e in entries)) > 1
+                or len(set(e["store_raw"] for e in entries)) > 1
+            ):
+                duplicates.append(
+                    {
+                        "date": key[0],
+                        "amount": key[1],
+                        "store": entries[0]["store_normalized"],
+                        "count": len(entries),
+                        "entries": entries,
+                    }
+                )
+        duplicates.sort(key=lambda d: -d["count"])
+        return duplicates
+
     # -- Reimbursers --
 
     def get_reimbursers(self) -> list[dict]:

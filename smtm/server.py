@@ -475,6 +475,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json_response({"store_pairs": self.db.get_store_pairs()})
         elif path == "/api/store-pairs/discover":
             self._json_response({"suggestions": self.db.discover_store_pairs()})
+        elif path == "/api/duplicates":
+            self._json_response({"duplicates": self.db.detect_duplicates()})
         elif path == "/api/stores":
             self._json_response(self.db.get_distinct_stores())
         elif path == "/api/suggest":

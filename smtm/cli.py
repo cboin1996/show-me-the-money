@@ -355,6 +355,27 @@ def cmd_stores(args):
                 for s in suggestions:
                     db.add_store_pair(s["raw"], s["suggested_normalized"])
                 print(f"\n  Applied {len(suggestions)} store pairs.")
+    elif args.stores_action == "duplicates":
+        dupes = db.detect_duplicates()
+        if not dupes:
+            print("  No duplicates found.")
+        else:
+            print(f"  {len(dupes)} duplicate groups:\n")
+            print(f"  {'Date':<12} {'Store':<30} {'Amount':<10} {'Count':<5} Sources")
+            print(f"  {'-'*12} {'-'*30} {'-'*10} {'-'*5} {'-'*20}")
+            for d in dupes[:30]:
+                sources = ", ".join(set(e["source_file"] for e in d["entries"]))
+                print(
+                    f"  {d['date']:<12} {d['store']:<30} "
+                    f"${d['amount']:<9.2f} {d['count']:<5} {sources}"
+                )
+            if args.delete:
+                deleted = 0
+                for d in dupes:
+                    for e in d["entries"][1:]:
+                        db.soft_delete(e["uuid"])
+                        deleted += 1
+                print(f"\n  Soft-deleted {deleted} duplicate transactions.")
     db.close()
 
 
@@ -526,6 +547,10 @@ def main():
     )
     st_disc = st_sub.add_parser("discover", help="Fuzzy-match stores to suggest pairs")
     st_disc.add_argument("--apply", action="store_true", help="Apply discovered pairs")
+    st_dupes = st_sub.add_parser("duplicates", help="Detect duplicate transactions")
+    st_dupes.add_argument(
+        "--delete", action="store_true", help="Soft-delete duplicates (keeps first)"
+    )
 
     # recategorize
     sub.add_parser(
