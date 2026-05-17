@@ -670,6 +670,19 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
         <div style="margin-bottom:12px"><button class="btn btn-success" id="applyAllSuggBtn">Apply All</button></div>
         <div class="scroll-table"><table><thead><tr><th>Store</th><th>Suggested</th><th>Amount</th><th>Count</th><th>Actions</th></tr></thead><tbody id="suggestBody"></tbody></table></div>
     </div>
+    <div class="section">
+        <h2>Category Rules <span id="rulesCount" style="font-size:12px;color:#94a3b8"></span></h2>
+        <div class="form-row">
+            <input type="text" id="newRulePattern" placeholder="Pattern (store name)" list="dl-expense-stores">
+            <select id="newRuleCat"></select>
+            <select id="newRuleType"><option value="exact">exact</option><option value="substring">substring</option></select>
+            <button class="btn" id="addRuleBtn">Add Rule</button>
+        </div>
+        <div class="form-row">
+            <input type="text" id="rulesSearch" placeholder="Search rules..." style="width:250px">
+        </div>
+        <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Pattern</th><th>Category</th><th>Match Type</th></tr></thead><tbody id="rulesBody"></tbody></table></div>
+    </div>
 </div>
 
 <!-- BUDGETS TAB -->
@@ -701,19 +714,6 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
 
 <!-- MANAGE TAB -->
 <div id="tab-manage" class="hidden">
-    <div class="section">
-        <h2>Category Rules <span id="rulesCount" style="font-size:12px;color:#94a3b8"></span></h2>
-        <div class="form-row">
-            <input type="text" id="newRulePattern" placeholder="Pattern (store name)" list="dl-expense-stores">
-            <select id="newRuleCat"></select>
-            <select id="newRuleType"><option value="exact">exact</option><option value="substring">substring</option></select>
-            <button class="btn" id="addRuleBtn">Add Rule</button>
-        </div>
-        <div class="form-row">
-            <input type="text" id="rulesSearch" placeholder="Search rules..." style="width:250px">
-        </div>
-        <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Pattern</th><th>Category</th><th>Match Type</th></tr></thead><tbody id="rulesBody"></tbody></table></div>
-    </div>
     <div class="section">
         <h2>Store Pairs <span id="pairsCount" style="font-size:12px;color:#94a3b8"></span></h2>
         <div class="form-row">
@@ -1217,22 +1217,27 @@ const App = {
         this._discoveredStorePairs = suggestions;
         document.getElementById('suggestedPairsCount').textContent = `(${suggestions.length})`;
         document.getElementById('suggestedPairsBody').innerHTML = suggestions.map((s, i) =>
-            `<tr><td>${s.raw}</td><td>${s.suggested_normalized}</td><td>${s.count}</td><td><button class="btn btn-sm btn-success" onclick="App.acceptStorePair(${i})">Accept</button></td></tr>`
+            `<tr><td>${s.raw}</td><td><input type="text" value="${s.suggested_normalized}" id="sugNorm_${i}" style="width:100%;background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:4px 8px;border-radius:4px" list="dl-all-stores"></td><td>${s.count}</td><td><button class="btn btn-sm btn-success" onclick="App.acceptStorePair(${i})">Accept</button></td></tr>`
         ).join('');
         document.getElementById('suggestedPairsSection').classList.remove('hidden');
     },
 
     async acceptStorePair(idx) {
         const s = this._discoveredStorePairs[idx];
-        await apiPost('/api/store-pairs', {raw_name: s.raw, normalized_name: s.suggested_normalized});
-        toast(`Paired: ${s.raw} -> ${s.suggested_normalized}`);
+        const edited = document.getElementById(`sugNorm_${idx}`).value.trim();
+        const normalized = edited || s.suggested_normalized;
+        await apiPost('/api/store-pairs', {raw_name: s.raw, normalized_name: normalized});
+        toast(`Paired: ${s.raw} -> ${normalized}`);
         await this.refresh();
     },
 
     async acceptAllStorePairs() {
         if (!this._discoveredStorePairs || !this._discoveredStorePairs.length) return;
-        for (const s of this._discoveredStorePairs) {
-            await apiPost('/api/store-pairs', {raw_name: s.raw, normalized_name: s.suggested_normalized});
+        for (let i = 0; i < this._discoveredStorePairs.length; i++) {
+            const s = this._discoveredStorePairs[i];
+            const el = document.getElementById(`sugNorm_${i}`);
+            const normalized = (el && el.value.trim()) || s.suggested_normalized;
+            await apiPost('/api/store-pairs', {raw_name: s.raw, normalized_name: normalized});
         }
         toast(`Accepted ${this._discoveredStorePairs.length} pairs`);
         document.getElementById('suggestedPairsSection').classList.add('hidden');
