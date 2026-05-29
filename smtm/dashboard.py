@@ -516,6 +516,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .charts { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-bottom: 30px; }
 .chart-box { background: #1e293b; border-radius: 12px; padding: 20px; }
 .chart-box h2 { font-size: 16px; margin-bottom: 12px; color: #f8fafc; }
+.chart-box canvas { max-height: 280px; }
 .trend-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
 .section { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
 .section h2 { font-size: 16px; margin-bottom: 12px; color: #f8fafc; }
@@ -661,11 +662,13 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
     </div>
     <div class="section">
         <h2>Category Rules <span id="rulesCount" style="font-size:12px;color:#94a3b8"></span></h2>
+        <p class="subtitle">Rules map store names to categories. <strong>Editing a transaction category also saves a rule</strong> so future imports self-categorize.</p>
         <div class="form-row">
             <input type="text" id="newRulePattern" placeholder="Pattern (store name)" list="dl-expense-stores">
             <select id="newRuleCat"></select>
             <select id="newRuleType"><option value="exact">exact</option><option value="substring">substring</option></select>
             <button class="btn" id="addRuleBtn">Add Rule</button>
+            <button class="btn btn-outline btn-sm" id="normalizeRulesBtn" title="Update any rules using raw bank names to use normalized store names instead">Normalize rule patterns</button>
         </div>
         <div class="form-row">
             <input type="text" id="rulesSearch" placeholder="Search rules..." style="width:250px">
@@ -1811,7 +1814,7 @@ const App = {
                 <td><input type="checkbox" data-uuid="${t.uuid}" ${checked} onchange="App.toggleSelect('${t.uuid}', this.checked)"></td>
                 <td>${t.date}</td>
                 <td title="${t.store_raw}">${t.store_normalized}</td>
-                <td>${catBadge(t.category)} <select class="inline-cat-select" onchange="App.inlineCategory('${t.uuid}', this.value)"><option value="">edit</option>${catOpts}</select></td>
+                <td>${catBadge(t.category)} <select class="inline-cat-select" onchange="App.inlineCategory('${t.uuid}', '${(t.store_normalized||t.store_raw).replace(/'/g,"\\'")}', this.value)"><option value="">edit</option>${catOpts}</select></td>
                 <td style="text-align:right;font-variant-numeric:tabular-nums">${t.type==='income'?'+':'-'}${amtDisplay}</td>
                 <td>${t.type}</td>
                 <td>${tripNames}</td>
@@ -1867,10 +1870,13 @@ const App = {
         await this.refresh();
     },
 
-    async inlineCategory(uuid, category) {
+    async inlineCategory(uuid, store, category) {
         if (!category) return;
         await api(`/api/transactions/${uuid}/category`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({category})});
-        toast(`Updated category to ${category}`);
+        if (store) {
+            await apiPost('/api/rules', {pattern: store, category, match_type: 'exact'});
+        }
+        toast(`${store || uuid} → ${category} (rule saved)`);
         await this.refresh();
     },
 
@@ -1952,6 +1958,12 @@ document.getElementById('addRuleBtn').addEventListener('click', async () => {
     const data = await apiPost('/api/rules', {pattern, category: cat, match_type: type});
     toast(`Rule added: ${pattern} → ${cat} (${data.updated || 0} transactions updated)`);
     document.getElementById('newRulePattern').value = '';
+    await App.refresh();
+});
+
+document.getElementById('normalizeRulesBtn').addEventListener('click', async () => {
+    const data = await apiPost('/api/rules/normalize', {});
+    toast(`Normalized ${data.normalized} rule pattern${data.normalized === 1 ? '' : 's'}`);
     await App.refresh();
 });
 

@@ -327,7 +327,9 @@ class TestStorePairs:
     def test_add_store_pair(self, dashboard: DashboardPage):
         uid = _uid()
         dashboard.add_store_pair(f"raw_{uid}", f"norm_{uid}")
-        expect(dashboard.toast).to_contain_text(re.compile(r"normalized|recategorized", re.IGNORECASE))
+        expect(dashboard.toast).to_contain_text(
+            re.compile(r"normalized|recategorized", re.IGNORECASE)
+        )
 
     def test_search_pairs_filters(self, dashboard: DashboardPage):
         uid = _uid()

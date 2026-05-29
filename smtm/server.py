@@ -525,6 +525,9 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_import(preview=False)
         elif path == "/api/import/preview":
             self._handle_import(preview=True)
+        elif path == "/api/rules/normalize":
+            normalized = self.db.normalize_rules()
+            self._json_response({"ok": True, "normalized": normalized})
         elif path == "/api/rules":
             data = self._read_json_body()
             pattern = data.get("pattern", "")
@@ -702,7 +705,9 @@ class Handler(BaseHTTPRequestHandler):
             end_date = data.get("end_date", "")
             notes = data.get("notes", "")
             excluded = data.get("excluded_categories", None)
-            if self.db.update_trip(trip_id, name, start_date, end_date, notes, excluded):
+            if self.db.update_trip(
+                trip_id, name, start_date, end_date, notes, excluded
+            ):
                 self._json_response({"ok": True})
             else:
                 self._error(404, "Trip not found")

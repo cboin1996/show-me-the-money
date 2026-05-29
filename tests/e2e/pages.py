@@ -160,7 +160,9 @@ class DashboardPage:
     def search_pairs(self, query: str):
         self.page.locator("#pairsSearch").fill(query)
 
-    def add_reimburser(self, pattern: str, label: str = "", match_type: str = "substring"):
+    def add_reimburser(
+        self, pattern: str, label: str = "", match_type: str = "substring"
+    ):
         self.click_tab("reimburse")
         self.page.locator("#newReimburserPattern").fill(pattern)
         if label:

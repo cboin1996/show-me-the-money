@@ -173,9 +173,7 @@ class Database:
                         self.conn.execute(sql)
                     except sqlite3.OperationalError:
                         pass  # column already exists — idempotent
-                    self.conn.execute(
-                        "UPDATE schema_version SET version = ?", (i,)
-                    )
+                    self.conn.execute("UPDATE schema_version SET version = ?", (i,))
                     ver = i
 
     # -- Import log --
@@ -271,6 +269,7 @@ class Database:
 
     def soft_delete(self, uuid: str) -> bool:
         from datetime import datetime
+
         with self.conn:
             cursor = self.conn.execute(
                 "UPDATE transactions SET is_deleted = 1, deleted_at = ? WHERE uuid = ?",
@@ -362,6 +361,41 @@ class Database:
                             (final, row["uuid"]),
                         )
                         updated += 1
+        self.normalize_rules()
+        return updated
+
+    def normalize_rules(self) -> int:
+        """Update exact rule patterns from raw store names to their normalized equivalents."""
+        pairs = self.get_store_pairs()
+        if not pairs:
+            return 0
+        pairs_lower = {k.lower(): v for k, v in pairs.items()}
+        rules = self.conn.execute(
+            "SELECT pattern, category FROM category_rules WHERE match_type = 'exact'"
+        ).fetchall()
+        updated = 0
+        with self.conn:
+            for rule in rules:
+                p = rule["pattern"].lower()
+                if p not in pairs_lower:
+                    continue
+                new_pattern = pairs_lower[p]
+                if new_pattern.lower() == p:
+                    continue
+                try:
+                    self.conn.execute(
+                        "UPDATE category_rules SET pattern = ? "
+                        "WHERE pattern = ? AND match_type = 'exact'",
+                        (new_pattern, rule["pattern"]),
+                    )
+                    updated += 1
+                except sqlite3.IntegrityError:
+                    # Normalized pattern already has a rule — drop the raw duplicate
+                    self.conn.execute(
+                        "DELETE FROM category_rules WHERE pattern = ? AND match_type = 'exact'",
+                        (rule["pattern"],),
+                    )
+                    updated += 1
         return updated
 
     def remove_store_pair(self, raw_name: str) -> bool:
@@ -741,15 +775,18 @@ class Database:
                 pair_data[key] = {"link_count": 0, "examples": []}
             pair_data[key]["link_count"] += 1
             if len(pair_data[key]["examples"]) < 3:
-                pair_data[key]["examples"].append({
-                    "income_date": inc_row["date"],
-                    "income_store": inc_row["store_normalized"] or inc_row["store_raw"],
-                    "income_amount": round(inc_row["amount"], 2),
-                    "expense_date": row["exp_date"],
-                    "expense_store": row["exp_norm"] or row["exp_raw"],
-                    "expense_amount": round(row["exp_amount"], 2),
-                    "expense_category": row["exp_cat"] or "",
-                })
+                pair_data[key]["examples"].append(
+                    {
+                        "income_date": inc_row["date"],
+                        "income_store": inc_row["store_normalized"]
+                        or inc_row["store_raw"],
+                        "income_amount": round(inc_row["amount"], 2),
+                        "expense_date": row["exp_date"],
+                        "expense_store": row["exp_norm"] or row["exp_raw"],
+                        "expense_amount": round(row["exp_amount"], 2),
+                        "expense_category": row["exp_cat"] or "",
+                    }
+                )
 
         discovered = [
             {
@@ -998,9 +1035,7 @@ class Database:
                     "start_date": t["start_date"],
                     "end_date": t["end_date"],
                     "notes": t["notes"],
-                    "excluded_categories": json.loads(
-                        t["excluded_categories"] or "[]"
-                    ),
+                    "excluded_categories": json.loads(t["excluded_categories"] or "[]"),
                     "txn_count": len(included),
                     "total_spend": round(sum(r["amount"] for r in included), 2),
                 }
@@ -1094,9 +1129,7 @@ class Database:
         trip = self.get_trip(trip_id)
         if not trip:
             return 0
-        excluded = set(
-            c.lower() for c in (trip.get("excluded_categories") or [])
-        )
+        excluded = set(c.lower() for c in (trip.get("excluded_categories") or []))
         with self._lock:
             rows = self.conn.execute(
                 "SELECT uuid, category FROM transactions WHERE date >= ? AND date <= ? AND is_deleted = 0 AND txn_type = 'expense'",
@@ -1151,9 +1184,7 @@ class Database:
             params.append(json.dumps(excluded_categories))
         params.append(trip_id)
         with self.conn:
-            cur = self.conn.execute(
-                f"UPDATE trips SET {fields} WHERE id=?", params
-            )
+            cur = self.conn.execute(f"UPDATE trips SET {fields} WHERE id=?", params)
         return cur.rowcount > 0
 
     # -- Helpers --
