@@ -84,10 +84,26 @@ class TestTabs:
         expect(dashboard.page.locator("#tab-import")).to_be_visible()
         expect(dashboard.page.get_by_test_id("import-zone")).to_be_visible()
 
-    def test_categorize_tab(self, dashboard: DashboardPage):
+    def test_transactions_tab(self, dashboard: DashboardPage):
+        dashboard.click_tab("transactions")
+        expect(dashboard.page.locator("#tab-transactions")).to_be_visible()
+        expect(dashboard.page.get_by_test_id("txn-table")).to_be_visible()
+
+    def test_organize_tab(self, dashboard: DashboardPage):
         dashboard.click_tab("organize")
         expect(dashboard.page.locator("#tab-organize")).to_be_visible()
         expect(dashboard.page.get_by_test_id("recategorize-btn")).to_be_visible()
+        expect(dashboard.page.locator("#pairsSearch")).to_be_visible()
+
+    def test_reimburse_tab(self, dashboard: DashboardPage):
+        dashboard.click_tab("reimburse")
+        expect(dashboard.page.locator("#tab-reimburse")).to_be_visible()
+        expect(dashboard.page.locator("#addReimburserBtn")).to_be_visible()
+
+    def test_trips_tab(self, dashboard: DashboardPage):
+        dashboard.click_tab("trips")
+        expect(dashboard.page.locator("#tab-trips")).to_be_visible()
+        expect(dashboard.page.locator("#tripsBody")).to_be_visible()
 
     def test_budgets_tab(self, dashboard: DashboardPage):
         dashboard.click_tab("budgets")
@@ -105,6 +121,7 @@ class TestTabs:
 
 class TestFiltering:
     def test_search_narrows_results(self, dashboard: DashboardPage):
+        dashboard.go_to_transactions()
         expect(dashboard.txn_rows.first).to_be_visible()
         initial = dashboard.txn_rows.count()
         dashboard.search_transactions("starbucks")
@@ -113,6 +130,7 @@ class TestFiltering:
         assert dashboard.txn_rows.count() > 0
 
     def test_category_filter(self, dashboard: DashboardPage):
+        dashboard.go_to_transactions()
         expect(dashboard.txn_rows.first).to_be_visible()
         initial = dashboard.txn_rows.count()
         dashboard.filter_category("Dining")
@@ -120,6 +138,7 @@ class TestFiltering:
         assert dashboard.txn_rows.count() > 0
 
     def test_date_range_filter(self, dashboard: DashboardPage):
+        dashboard.go_to_transactions()
         expect(dashboard.txn_rows.first).to_be_visible()
         initial = dashboard.txn_rows.count()
         dashboard.filter_date_range("2026-01-01", "2026-01-31")
@@ -308,14 +327,14 @@ class TestStorePairs:
     def test_add_store_pair(self, dashboard: DashboardPage):
         uid = _uid()
         dashboard.add_store_pair(f"raw_{uid}", f"norm_{uid}")
-        expect(dashboard.toast).to_contain_text("Pair added")
+        expect(dashboard.toast).to_contain_text(re.compile(r"normalized|recategorized", re.IGNORECASE))
 
     def test_search_pairs_filters(self, dashboard: DashboardPage):
         uid = _uid()
         dashboard.add_store_pair(f"searchable_{uid}", f"target_{uid}")
         expect(dashboard.toast).to_be_visible()
         dashboard.search_pairs(f"searchable_{uid}")
-        expect(dashboard.page.locator("#pairsCount")).to_contain_text("1/")
+        expect(dashboard.page.locator("#pairsCount")).to_contain_text("1 group")
 
 
 # --- Analytics ---
@@ -359,6 +378,7 @@ class TestAnalytics:
 
 class TestExport:
     def test_export_button_visible(self, dashboard: DashboardPage):
+        dashboard.go_to_transactions()
         expect(dashboard.export_btn).to_be_visible()
         expect(dashboard.export_btn).to_have_text("Export CSV")
 
@@ -368,16 +388,68 @@ class TestExport:
 
 class TestSorting:
     def test_sort_by_amount(self, dashboard: DashboardPage):
+        dashboard.go_to_transactions()
         expect(dashboard.txn_rows.first).to_be_visible()
         dashboard.page.locator("th[data-col='amount']").click()
         expect(dashboard.txn_rows.first).to_be_visible()
 
     def test_sort_by_date(self, dashboard: DashboardPage):
+        dashboard.go_to_transactions()
         expect(dashboard.txn_rows.first).to_be_visible()
         dashboard.page.locator("th[data-col='date']").click()
         expect(dashboard.txn_rows.first).to_be_visible()
 
     def test_sort_by_store(self, dashboard: DashboardPage):
+        dashboard.go_to_transactions()
         expect(dashboard.txn_rows.first).to_be_visible()
         dashboard.page.locator("th[data-col='store']").click()
         expect(dashboard.txn_rows.first).to_be_visible()
+
+
+# --- Reimburse ---
+
+
+class TestReimburse:
+    def test_reimburse_tab_renders(self, dashboard: DashboardPage):
+        dashboard.click_tab("reimburse")
+        expect(dashboard.page.locator("#tab-reimburse")).to_be_visible()
+        expect(dashboard.page.locator("#addReimburserBtn")).to_be_visible()
+        expect(dashboard.page.get_by_test_id("pending-reimb-body")).to_be_attached()
+
+    def test_add_reimburser(self, dashboard: DashboardPage):
+        uid = _uid()
+        dashboard.add_reimburser(f"e2e_reimb_{uid}")
+        expect(dashboard.toast).to_contain_text("Reimburser added")
+
+    def test_reimburser_pairs_form_visible(self, dashboard: DashboardPage):
+        dashboard.click_tab("reimburse")
+        expect(dashboard.page.locator("#addReimbPairBtn")).to_be_visible()
+
+
+# --- Trips ---
+
+
+class TestTrips:
+    def test_trips_tab_renders(self, dashboard: DashboardPage):
+        dashboard.click_tab("trips")
+        expect(dashboard.page.locator("#tab-trips")).to_be_visible()
+        expect(dashboard.page.locator("#tripsBody")).to_be_visible()
+
+    def test_create_trip(self, dashboard: DashboardPage):
+        uid = _uid()
+        dashboard.create_trip(f"E2E Trip {uid}", "2026-01-01", "2026-01-31")
+        expect(dashboard.toast).to_contain_text("Trip created")
+
+    def test_trip_appears_in_table(self, dashboard: DashboardPage):
+        uid = _uid()
+        name = f"TableTrip_{uid}"
+        dashboard.create_trip(name, "2026-02-01", "2026-02-28")
+        expect(dashboard.toast).to_contain_text("Trip created")
+        expect(dashboard.page.locator("#tripsBody")).to_contain_text(name)
+
+    def test_trip_create_form_visible(self, dashboard: DashboardPage):
+        dashboard.click_tab("trips")
+        expect(dashboard.page.locator("#newTripName")).to_be_visible()
+        expect(dashboard.page.locator("#newTripStart")).to_be_visible()
+        expect(dashboard.page.locator("#newTripEnd")).to_be_visible()
+        expect(dashboard.page.locator("#createTripBtn")).to_be_visible()

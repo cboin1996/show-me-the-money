@@ -1087,6 +1087,83 @@ class TestEndToEnd:
         assert result.returncode == 0
         assert "Not found or not linked" in result.stdout
 
+    def test_cli_suggest(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [sys.executable, "-m", "smtm.cli", "--db-path", str(db_path), "--csv-dir", str(FIXTURES)]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        result = subprocess.run(base + ["suggest"], capture_output=True, text=True)
+        assert result.returncode == 0
+
+    def test_cli_suggest_apply(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [sys.executable, "-m", "smtm.cli", "--db-path", str(db_path), "--csv-dir", str(FIXTURES)]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        result = subprocess.run(base + ["suggest", "--apply"], capture_output=True, text=True)
+        assert result.returncode == 0
+
+    def test_cli_report_text(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [sys.executable, "-m", "smtm.cli", "--db-path", str(db_path), "--csv-dir", str(FIXTURES)]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        result = subprocess.run(base + ["report"], capture_output=True, text=True)
+        assert result.returncode == 0
+        assert "TOTAL" in result.stdout or "SUMMARY" in result.stdout
+
+    def test_cli_report_html(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        out = tmp_path / "report.html"
+        base = [sys.executable, "-m", "smtm.cli", "--db-path", str(db_path), "--csv-dir", str(FIXTURES)]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        result = subprocess.run(base + ["report", "--html", "--output", str(out)], capture_output=True, text=True)
+        assert result.returncode == 0
+        assert out.exists()
+        assert "<html" in out.read_text().lower()
+
+    def test_cli_budget_set_copy_show(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [sys.executable, "-m", "smtm.cli", "--db-path", str(db_path), "--csv-dir", str(FIXTURES)]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        result = subprocess.run(base + ["budget", "set", "2026-01", "Dining=500"], capture_output=True, text=True)
+        assert result.returncode == 0
+        result = subprocess.run(base + ["budget", "copy", "2026-01", "2026-02"], capture_output=True, text=True)
+        assert result.returncode == 0
+        result = subprocess.run(base + ["budget", "show"], capture_output=True, text=True)
+        assert result.returncode == 0
+        assert "Dining" in result.stdout
+        result = subprocess.run(base + ["budget", "show", "2026-01"], capture_output=True, text=True)
+        assert result.returncode == 0
+        assert "Dining" in result.stdout
+
+    def test_cli_history(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [sys.executable, "-m", "smtm.cli", "--db-path", str(db_path), "--csv-dir", str(FIXTURES)]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        result = subprocess.run(base + ["history"], capture_output=True, text=True)
+        assert result.returncode == 0
+        assert result.stdout.strip()
+
+    def test_cli_stores_list(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [sys.executable, "-m", "smtm.cli", "--db-path", str(db_path), "--csv-dir", str(FIXTURES)]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        result = subprocess.run(base + ["stores", "list"], capture_output=True, text=True)
+        assert result.returncode == 0
+        assert result.stdout.strip()
+
+    def test_cli_stores_discover(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [sys.executable, "-m", "smtm.cli", "--db-path", str(db_path), "--csv-dir", str(FIXTURES)]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        result = subprocess.run(base + ["stores", "discover"], capture_output=True, text=True)
+        assert result.returncode == 0
+
+    def test_cli_stores_dupes(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        base = [sys.executable, "-m", "smtm.cli", "--db-path", str(db_path), "--csv-dir", str(FIXTURES)]
+        subprocess.run(base + ["import"], capture_output=True, text=True)
+        result = subprocess.run(base + ["stores", "duplicates"], capture_output=True, text=True)
+        assert result.returncode == 0
+
     def test_import_dedup(self, tmp_path):
         """Importing the same files twice should produce 0 new on second run."""
         db_path = tmp_path / "test.db"

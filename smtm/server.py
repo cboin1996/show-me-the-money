@@ -511,7 +511,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._error(404, "Trip not found")
             else:
                 txns = self.db.get_trip_transactions(trip_id)
-                self._json_response({"trip": trip, "transactions": _txns_to_json(txns)})
+                self._json_response({"trip": trip, "transactions": txns})
         elif path == "/api/report/pdf":
             self._handle_pdf_download()
         else:
@@ -664,10 +664,11 @@ class Handler(BaseHTTPRequestHandler):
             start_date = data.get("start_date", "")
             end_date = data.get("end_date", "")
             notes = data.get("notes", "")
+            excluded = data.get("excluded_categories", None)
             if not name or not start_date or not end_date:
                 self._error(400, "name, start_date, end_date required")
                 return
-            trip_id = self.db.create_trip(name, start_date, end_date, notes)
+            trip_id = self.db.create_trip(name, start_date, end_date, notes, excluded)
             if data.get("auto_assign"):
                 added = self.db.auto_assign_trip(trip_id)
             else:
@@ -686,6 +687,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.db.add_trip_transaction(trip_id, txn_uuid)
             self._json_response({"ok": True})
+        elif re.match(r"^/api/trips/(\d+)/transactions/[^/]+/toggle-solo$", path):
+            m = re.match(r"^/api/trips/(\d+)/transactions/([^/]+)/toggle-solo$", path)
+            trip_id, txn_uuid = int(m.group(1)), m.group(2)
+            if self.db.toggle_trip_solo(trip_id, txn_uuid):
+                self._json_response({"ok": True})
+            else:
+                self._error(404, "Trip transaction not found")
         elif re.match(r"^/api/trips/(\d+)$", path):
             trip_id = int(re.match(r"^/api/trips/(\d+)$", path).group(1))
             data = self._read_json_body()
@@ -693,7 +701,8 @@ class Handler(BaseHTTPRequestHandler):
             start_date = data.get("start_date", "")
             end_date = data.get("end_date", "")
             notes = data.get("notes", "")
-            if self.db.update_trip(trip_id, name, start_date, end_date, notes):
+            excluded = data.get("excluded_categories", None)
+            if self.db.update_trip(trip_id, name, start_date, end_date, notes, excluded):
                 self._json_response({"ok": True})
             else:
                 self._error(404, "Trip not found")
@@ -714,6 +723,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._error(400, "category required")
                 return
             self.db.update_category(uuid, category)
+            self._json_response({"ok": True})
+        elif path.startswith("/api/transactions/") and "/type" in path:
+            uuid = self._extract_uuid(path, "/api/transactions/")
+            if uuid.endswith("/type"):
+                uuid = uuid[:-5]
+            data = self._read_json_body()
+            txn_type = data.get("type", "")
+            if txn_type not in ("expense", "income", "transfer"):
+                self._error(400, "type must be expense, income, or transfer")
+                return
+            self.db.update_txn_type(uuid, txn_type)
             self._json_response({"ok": True})
         else:
             self._error(404, "Not found")

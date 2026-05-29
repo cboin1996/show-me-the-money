@@ -160,6 +160,23 @@ class DashboardPage:
     def search_pairs(self, query: str):
         self.page.locator("#pairsSearch").fill(query)
 
+    def add_reimburser(self, pattern: str, label: str = "", match_type: str = "substring"):
+        self.click_tab("reimburse")
+        self.page.locator("#newReimburserPattern").fill(pattern)
+        if label:
+            self.page.locator("#newReimburserLabel").fill(label)
+        self.page.locator("#newReimburserType").select_option(match_type)
+        self.page.locator("#addReimburserBtn").click()
+
+    def create_trip(self, name: str, start_date: str, end_date: str, notes: str = ""):
+        self.click_tab("trips")
+        self.page.locator("#newTripName").fill(name)
+        self.page.locator("#newTripStart").fill(start_date)
+        self.page.locator("#newTripEnd").fill(end_date)
+        if notes:
+            self.page.locator("#newTripNotes").fill(notes)
+        self.page.locator("#createTripBtn").click()
+
     def restore_first_deleted(self):
         self.page.locator("#recycleBody .btn").first.click()
 
