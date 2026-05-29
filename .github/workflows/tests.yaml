@@ -1,0 +1,39 @@
+name: tests
+
+on:
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: make setup
+      - name: Test with pytest
+        run: make test
+      - name: Upload pytest results
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results-${{ matrix.python-version }}
+          path: junit/test-results.xml
+        if: ${{ always() }}
+      - name: Upload xml coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-coverage-xml-${{ matrix.python-version }}
+          path: coverage.xml
+        if: ${{ always() }}
+      - name: Upload html coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-coverage-html-${{ matrix.python-version }}
+          path: htmlcov/
+        if: ${{ always() }}

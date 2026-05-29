@@ -3,7 +3,7 @@ __pycache__
 venv
 data
 CB_IOS_APP
-ShowMeYourMoney.egg-info
+*.egg-info
 build
 dist
 backups
@@ -13,4 +13,10 @@ Bug Reports
 # Do not track these files
 app_data.csv
 expenseDB.json
+*.db
 .DS_STORE
+.venv/
+junit/
+htmlcov/
+coverage.xml
+.coverage

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "show-me-the-money"
+version = "2.0.0"
+description = "CLI transaction categorizer and budget tool"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.0",
+    "fpdf2>=2.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "isort",
+    "pytest>=7.0",
+    "pytest-cov",
+    "playwright",
+    "pytest-playwright",
+]
+
+[project.scripts]
+smtm = "smtm.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["smtm*"]
+exclude = ["junit"]
+
+[tool.black]
+line-length = 88
+
+[tool.isort]
+profile = "black"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["e2e: end-to-end browser tests (require playwright)"]
