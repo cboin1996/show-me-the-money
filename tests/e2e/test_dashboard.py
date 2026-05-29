@@ -203,7 +203,7 @@ class TestInlineCategory:
         dashboard.search_transactions("unknown shop xyz")
         expect(dashboard.txn_rows.first).to_be_visible()
         dashboard.inline_set_category(0, "Health")
-        expect(dashboard.toast).to_contain_text("Updated")
+        expect(dashboard.toast).to_contain_text("rule saved")
 
 
 # --- Delete & Restore ---
