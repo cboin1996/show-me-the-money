@@ -1,9 +1,9 @@
 """Core data models."""
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
-from uuid import uuid4
 
 
 class TxnType(Enum):
@@ -31,7 +31,8 @@ class Transaction:
 
     def __post_init__(self):
         if not self.uuid:
-            self.uuid = str(uuid4())
+            key = f"{self.date}|{self.amount}|{self.store_raw}|{self.sub_description}|{self.source_file}"
+            self.uuid = hashlib.sha256(key.encode()).hexdigest()[:32]
 
     @property
     def month(self) -> str:
