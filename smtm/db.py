@@ -9,7 +9,20 @@ from pathlib import Path
 
 from .models import CategoryDB, Transaction, TxnType
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 5
+
+_MIGRATIONS = [
+    # 1: linked reimbursements
+    "ALTER TABLE transactions ADD COLUMN linked_to TEXT DEFAULT ''",
+    # 2: expense adjustment (partial offset amount)
+    "ALTER TABLE transactions ADD COLUMN adjustment REAL DEFAULT 0.0",
+    # 3: per-trip category exclusions
+    "ALTER TABLE trips ADD COLUMN excluded_categories TEXT DEFAULT '[\"Investments\"]'",
+    # 4: per-transaction solo flag (100% owner, not split)
+    "ALTER TABLE trip_transactions ADD COLUMN is_solo INTEGER DEFAULT 0",
+    # 5: soft-delete timestamp
+    "ALTER TABLE transactions ADD COLUMN deleted_at TEXT DEFAULT ''",
+]
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS transactions (
@@ -27,6 +40,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     is_deleted INTEGER DEFAULT 0,
     linked_to TEXT DEFAULT '',
     adjustment REAL DEFAULT 0.0,
+    deleted_at TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -86,6 +100,25 @@ CREATE TABLE IF NOT EXISTS import_log (
 
 CREATE INDEX IF NOT EXISTS idx_import_hash ON import_log(file_hash);
 
+CREATE TABLE IF NOT EXISTS trips (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    notes TEXT DEFAULT '',
+    excluded_categories TEXT DEFAULT '["Investments"]',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS trip_transactions (
+    trip_id INTEGER NOT NULL,
+    txn_uuid TEXT NOT NULL,
+    is_solo INTEGER DEFAULT 0,
+    PRIMARY KEY (trip_id, txn_uuid),
+    FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE,
+    FOREIGN KEY (txn_uuid) REFERENCES transactions(uuid) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
 );
@@ -131,19 +164,17 @@ class Database:
             self._migrate()
 
     def _migrate(self):
-        cols = {
-            r[1]
-            for r in self.conn.execute("PRAGMA table_info(transactions)").fetchall()
-        }
+        row = self.conn.execute("SELECT version FROM schema_version").fetchone()
+        ver = row["version"] if row else 0
         with self.conn:
-            if "linked_to" not in cols:
-                self.conn.execute(
-                    "ALTER TABLE transactions ADD COLUMN linked_to TEXT DEFAULT ''"
-                )
-            if "adjustment" not in cols:
-                self.conn.execute(
-                    "ALTER TABLE transactions ADD COLUMN adjustment REAL DEFAULT 0.0"
-                )
+            for i, sql in enumerate(_MIGRATIONS, start=1):
+                if ver < i:
+                    try:
+                        self.conn.execute(sql)
+                    except sqlite3.OperationalError:
+                        pass  # column already exists — idempotent
+                    self.conn.execute("UPDATE schema_version SET version = ?", (i,))
+                    ver = i
 
     # -- Import log --
 
@@ -237,17 +268,19 @@ class Database:
             return [self._row_to_txn(r) for r in self.conn.execute(sql).fetchall()]
 
     def soft_delete(self, uuid: str) -> bool:
+        from datetime import datetime
+
         with self.conn:
             cursor = self.conn.execute(
-                "UPDATE transactions SET is_deleted = 1 WHERE uuid = ?",
-                (uuid,),
+                "UPDATE transactions SET is_deleted = 1, deleted_at = ? WHERE uuid = ?",
+                (datetime.now().strftime("%Y-%m-%d %H:%M"), uuid),
             )
         return cursor.rowcount > 0
 
     def restore(self, uuid: str) -> bool:
         with self.conn:
             cursor = self.conn.execute(
-                "UPDATE transactions SET is_deleted = 0 WHERE uuid = ?",
+                "UPDATE transactions SET is_deleted = 0, deleted_at = '' WHERE uuid = ?",
                 (uuid,),
             )
         return cursor.rowcount > 0
@@ -258,6 +291,13 @@ class Database:
                 "UPDATE transactions SET category = ?, confidence = ? "
                 "WHERE uuid = ?",
                 (category, confidence, uuid),
+            )
+
+    def update_txn_type(self, uuid: str, txn_type: str):
+        with self.conn:
+            self.conn.execute(
+                "UPDATE transactions SET txn_type = ? WHERE uuid = ?",
+                (txn_type, uuid),
             )
 
     def recategorize_all(self, category_db: CategoryDB):
@@ -321,6 +361,41 @@ class Database:
                             (final, row["uuid"]),
                         )
                         updated += 1
+        self.normalize_rules()
+        return updated
+
+    def normalize_rules(self) -> int:
+        """Update exact rule patterns from raw store names to their normalized equivalents."""
+        pairs = self.get_store_pairs()
+        if not pairs:
+            return 0
+        pairs_lower = {k.lower(): v for k, v in pairs.items()}
+        rules = self.conn.execute(
+            "SELECT pattern, category FROM category_rules WHERE match_type = 'exact'"
+        ).fetchall()
+        updated = 0
+        with self.conn:
+            for rule in rules:
+                p = rule["pattern"].lower()
+                if p not in pairs_lower:
+                    continue
+                new_pattern = pairs_lower[p]
+                if new_pattern.lower() == p:
+                    continue
+                try:
+                    self.conn.execute(
+                        "UPDATE category_rules SET pattern = ? "
+                        "WHERE pattern = ? AND match_type = 'exact'",
+                        (new_pattern, rule["pattern"]),
+                    )
+                    updated += 1
+                except sqlite3.IntegrityError:
+                    # Normalized pattern already has a rule — drop the raw duplicate
+                    self.conn.execute(
+                        "DELETE FROM category_rules WHERE pattern = ? AND match_type = 'exact'",
+                        (rule["pattern"],),
+                    )
+                    updated += 1
         return updated
 
     def remove_store_pair(self, raw_name: str) -> bool:
@@ -337,7 +412,29 @@ class Database:
             rows = self.conn.execute(
                 "SELECT * FROM category_rules ORDER BY priority DESC, pattern"
             ).fetchall()
-            return [dict(r) for r in rows]
+            rules = [dict(r) for r in rows]
+            store_counts: dict[str, int] = {}
+            for r in self.conn.execute(
+                "SELECT LOWER(store_normalized) as sn, COUNT(*) as cnt "
+                "FROM transactions WHERE is_deleted=0 GROUP BY sn"
+            ).fetchall():
+                store_counts[r["sn"]] = r["cnt"]
+        raw_counts: dict[str, int] = {}
+        for r in self.conn.execute(
+            "SELECT LOWER(store_raw) as k, COUNT(*) as cnt "
+            "FROM transactions WHERE is_deleted=0 GROUP BY k"
+        ).fetchall():
+            raw_counts[r["k"]] = r["cnt"]
+        for rule in rules:
+            p = rule["pattern"].lower()
+            mt = rule["match_type"]
+            if mt == "exact":
+                rule["txn_count"] = store_counts.get(p, 0) or raw_counts.get(p, 0)
+            else:
+                rule["txn_count"] = sum(
+                    cnt for sn, cnt in store_counts.items() if p in sn
+                ) or sum(cnt for sr, cnt in raw_counts.items() if p in sr)
+        return rules
 
     def add_category_rule(
         self, pattern: str, category: str, match_type: str = "exact", priority: int = 0
@@ -650,38 +747,55 @@ class Database:
     def discover_reimburser_pairs(self) -> list[dict]:
         """Scan historical links to discover reimburser-to-expense patterns."""
         with self._lock:
-            # Find expenses that have been linked (have linked_to set)
             rows = self.conn.execute(
-                "SELECT store_normalized, store_raw, linked_to FROM transactions "
-                "WHERE linked_to != '' AND txn_type = 'expense' AND adjustment > 0"
+                "SELECT e.uuid as exp_uuid, e.store_normalized as exp_norm, e.store_raw as exp_raw, "
+                "e.amount as exp_amount, e.date as exp_date, e.category as exp_cat, "
+                "e.linked_to as inc_uuid "
+                "FROM transactions e "
+                "WHERE e.linked_to != '' AND e.txn_type = 'expense' AND e.adjustment > 0"
             ).fetchall()
         if not rows:
             return []
-        # For each linked expense, find the income it was linked to
-        pair_counts: dict[tuple[str, str], int] = {}
+
+        pair_data: dict[tuple[str, str], dict] = {}
         for row in rows:
-            expense_store = (row["store_normalized"] or row["store_raw"]).lower()
-            income_uuid = row["linked_to"]
+            expense_store = (row["exp_norm"] or row["exp_raw"]).lower()
             with self._lock:
                 inc_row = self.conn.execute(
-                    "SELECT store_normalized, store_raw FROM transactions "
-                    "WHERE uuid = ?",
-                    (income_uuid,),
+                    "SELECT store_normalized, store_raw, amount, date FROM transactions WHERE uuid = ?",
+                    (row["inc_uuid"],),
                 ).fetchone()
-            if inc_row:
-                income_store = (
-                    inc_row["store_normalized"] or inc_row["store_raw"]
-                ).lower()
-                key = (income_store, expense_store)
-                pair_counts[key] = pair_counts.get(key, 0) + 1
-        # Return pairs sorted by frequency
+            if not inc_row:
+                continue
+            income_store = (inc_row["store_normalized"] or inc_row["store_raw"]).lower()
+            if income_store == expense_store:
+                continue  # refund to same store — not a meaningful pair
+            key = (income_store, expense_store)
+            if key not in pair_data:
+                pair_data[key] = {"link_count": 0, "examples": []}
+            pair_data[key]["link_count"] += 1
+            if len(pair_data[key]["examples"]) < 3:
+                pair_data[key]["examples"].append(
+                    {
+                        "income_date": inc_row["date"],
+                        "income_store": inc_row["store_normalized"]
+                        or inc_row["store_raw"],
+                        "income_amount": round(inc_row["amount"], 2),
+                        "expense_date": row["exp_date"],
+                        "expense_store": row["exp_norm"] or row["exp_raw"],
+                        "expense_amount": round(row["exp_amount"], 2),
+                        "expense_category": row["exp_cat"] or "",
+                    }
+                )
+
         discovered = [
             {
                 "reimburser_pattern": k[0],
                 "expense_pattern": k[1],
-                "link_count": v,
+                "link_count": v["link_count"],
+                "examples": v["examples"],
             }
-            for k, v in pair_counts.items()
+            for k, v in pair_data.items()
         ]
         discovered.sort(key=lambda x: x["link_count"], reverse=True)
         return discovered
@@ -883,6 +997,196 @@ class Database:
             )
         return True
 
+    # -- Trips --
+
+    def get_trips(self) -> list[dict]:
+        from collections import defaultdict
+
+        with self._lock:
+            trip_rows = self.conn.execute(
+                "SELECT id, name, start_date, end_date, notes, excluded_categories "
+                "FROM trips ORDER BY start_date DESC"
+            ).fetchall()
+            txn_rows = self.conn.execute(
+                "SELECT tt.trip_id, tr.amount, tr.category "
+                "FROM trip_transactions tt "
+                "JOIN transactions tr ON tr.uuid = tt.txn_uuid "
+                "WHERE tr.is_deleted = 0 AND tr.txn_type = 'expense'"
+            ).fetchall()
+
+        txns_by_trip: dict[int, list] = defaultdict(list)
+        for r in txn_rows:
+            txns_by_trip[r["trip_id"]].append(r)
+
+        result = []
+        for t in trip_rows:
+            excluded = set(
+                c.lower() for c in json.loads(t["excluded_categories"] or "[]")
+            )
+            included = [
+                r
+                for r in txns_by_trip[t["id"]]
+                if (r["category"] or "").lower() not in excluded
+            ]
+            result.append(
+                {
+                    "id": t["id"],
+                    "name": t["name"],
+                    "start_date": t["start_date"],
+                    "end_date": t["end_date"],
+                    "notes": t["notes"],
+                    "excluded_categories": json.loads(t["excluded_categories"] or "[]"),
+                    "txn_count": len(included),
+                    "total_spend": round(sum(r["amount"] for r in included), 2),
+                }
+            )
+        return result
+
+    def get_trip(self, trip_id: int) -> dict | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT id, name, start_date, end_date, notes, excluded_categories "
+                "FROM trips WHERE id = ?",
+                (trip_id,),
+            ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["excluded_categories"] = json.loads(d["excluded_categories"] or "[]")
+        return d
+
+    def get_trip_transactions(self, trip_id: int) -> list[dict]:
+        """Return trip transactions as dicts including is_solo flag."""
+        trip = self.get_trip(trip_id)
+        excluded = set(
+            c.lower() for c in ((trip or {}).get("excluded_categories") or [])
+        )
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT tr.*, tt.is_solo FROM transactions tr "
+                "JOIN trip_transactions tt ON tt.txn_uuid = tr.uuid "
+                "WHERE tt.trip_id = ? AND tr.is_deleted = 0 AND tr.txn_type = 'expense' ORDER BY tr.date",
+                (trip_id,),
+            ).fetchall()
+        result = []
+        for r in rows:
+            if (r["category"] or "").lower() in excluded:
+                continue
+            txn = self._row_to_txn(r)
+            d = {
+                "date": txn.date.isoformat(),
+                "month": txn.month,
+                "amount": round(txn.amount, 2),
+                "store_raw": txn.store_raw,
+                "store_normalized": txn.store_normalized or txn.store_raw,
+                "category": txn.category or "Uncategorized",
+                "type": txn.txn_type.value,
+                "uuid": txn.uuid,
+                "is_solo": bool(r["is_solo"]),
+            }
+            result.append(d)
+        return result
+
+    def toggle_trip_solo(self, trip_id: int, txn_uuid: str) -> bool:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT is_solo FROM trip_transactions WHERE trip_id = ? AND txn_uuid = ?",
+                (trip_id, txn_uuid),
+            ).fetchone()
+        if not row:
+            return False
+        new_val = 0 if row["is_solo"] else 1
+        with self.conn:
+            self.conn.execute(
+                "UPDATE trip_transactions SET is_solo = ? WHERE trip_id = ? AND txn_uuid = ?",
+                (new_val, trip_id, txn_uuid),
+            )
+        return True
+
+    def create_trip(
+        self,
+        name: str,
+        start_date: str,
+        end_date: str,
+        notes: str = "",
+        excluded_categories: list[str] | None = None,
+    ) -> int:
+        if excluded_categories is None:
+            excluded_categories = ["Investments"]
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO trips (name, start_date, end_date, notes, excluded_categories) VALUES (?, ?, ?, ?, ?)",
+                (name, start_date, end_date, notes, json.dumps(excluded_categories)),
+            )
+        return cur.lastrowid
+
+    def delete_trip(self, trip_id: int) -> bool:
+        with self.conn:
+            cur = self.conn.execute("DELETE FROM trips WHERE id = ?", (trip_id,))
+        return cur.rowcount > 0
+
+    def auto_assign_trip(self, trip_id: int) -> int:
+        trip = self.get_trip(trip_id)
+        if not trip:
+            return 0
+        excluded = set(c.lower() for c in (trip.get("excluded_categories") or []))
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT uuid, category FROM transactions WHERE date >= ? AND date <= ? AND is_deleted = 0 AND txn_type = 'expense'",
+                (trip["start_date"], trip["end_date"]),
+            ).fetchall()
+        rows = [r for r in rows if (r["category"] or "").lower() not in excluded]
+        added = 0
+        with self.conn:
+            for row in rows:
+                try:
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO trip_transactions (trip_id, txn_uuid) VALUES (?, ?)",
+                        (trip_id, row["uuid"]),
+                    )
+                    added += 1
+                except Exception:
+                    pass
+        return added
+
+    def add_trip_transaction(self, trip_id: int, txn_uuid: str) -> bool:
+        try:
+            with self.conn:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO trip_transactions (trip_id, txn_uuid) VALUES (?, ?)",
+                    (trip_id, txn_uuid),
+                )
+            return True
+        except Exception:
+            return False
+
+    def remove_trip_transaction(self, trip_id: int, txn_uuid: str) -> bool:
+        with self.conn:
+            cur = self.conn.execute(
+                "DELETE FROM trip_transactions WHERE trip_id = ? AND txn_uuid = ?",
+                (trip_id, txn_uuid),
+            )
+        return cur.rowcount > 0
+
+    def update_trip(
+        self,
+        trip_id: int,
+        name: str,
+        start_date: str,
+        end_date: str,
+        notes: str = "",
+        excluded_categories: list[str] | None = None,
+    ) -> bool:
+        fields = "name=?, start_date=?, end_date=?, notes=?"
+        params: list = [name, start_date, end_date, notes]
+        if excluded_categories is not None:
+            fields += ", excluded_categories=?"
+            params.append(json.dumps(excluded_categories))
+        params.append(trip_id)
+        with self.conn:
+            cur = self.conn.execute(f"UPDATE trips SET {fields} WHERE id=?", params)
+        return cur.rowcount > 0
+
     # -- Helpers --
 
     @staticmethod
@@ -901,6 +1205,7 @@ class Database:
             is_deleted=bool(row["is_deleted"]),
             linked_to=row["linked_to"] or "",
             adjustment=row["adjustment"] or 0.0,
+            deleted_at=row["deleted_at"] if "deleted_at" in row.keys() else "",
         )
 
     @staticmethod

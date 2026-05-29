@@ -28,7 +28,7 @@ test:
 
 .PHONY: test-e2e
 test-e2e:
-	uv run pytest tests/e2e -v
+	uv run pytest tests/e2e -v --junitxml=junit/e2e-results.xml
 
 .PHONY: test-all
 test-all:

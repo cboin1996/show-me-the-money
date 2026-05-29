@@ -40,30 +40,39 @@ class DashboardPage:
     def txn_count_text(self) -> str:
         return self.page.locator("#txnCount").inner_text()
 
+    def go_to_transactions(self):
+        self.click_tab("transactions")
+
     def search_transactions(self, query: str):
+        self.go_to_transactions()
         inp = self.page.locator("#searchInput")
         inp.fill(query)
         expect(self.page.locator("#txnCount")).to_contain_text("Showing")
 
     def filter_category(self, category: str):
+        self.go_to_transactions()
         self.page.locator("#categoryFilter").select_option(category)
         expect(self.page.locator("#txnCount")).to_contain_text("Showing")
 
     def filter_date_range(self, from_date: str, to_date: str):
+        self.go_to_transactions()
         self.page.locator("#dateFrom").fill(from_date)
         self.page.locator("#dateTo").fill(to_date)
         expect(self.page.locator("#txnCount")).to_contain_text("Showing")
 
     def clear_filters(self):
+        self.go_to_transactions()
         self.page.locator("#searchInput").fill("")
         self.page.locator("#categoryFilter").select_option("")
         self.page.locator("#dateFrom").fill("")
         self.page.locator("#dateTo").fill("")
 
     def select_transaction_checkbox(self, index: int):
+        self.go_to_transactions()
         self.txn_body.locator("input[type='checkbox']").nth(index).check()
 
     def select_all(self):
+        self.go_to_transactions()
         self.page.get_by_test_id("select-all").check()
 
     @property
@@ -86,6 +95,7 @@ class DashboardPage:
         )
 
     def delete_row(self, row_index: int):
+        self.go_to_transactions()
         self.txn_body.locator(".btn-danger").nth(row_index).click()
 
     # --- Import ---
@@ -102,7 +112,7 @@ class DashboardPage:
     # --- Categorize ---
 
     def click_recategorize(self):
-        self.click_tab("categorize")
+        self.click_tab("organize")
         self.page.get_by_test_id("recategorize-btn").click()
 
     @property
@@ -132,7 +142,7 @@ class DashboardPage:
     # --- Manage ---
 
     def add_rule(self, pattern: str, category: str, match_type: str = "exact"):
-        self.click_tab("manage")
+        self.click_tab("organize")
         self.page.locator("#newRulePattern").fill(pattern)
         self.page.locator("#newRuleCat").select_option(category)
         self.page.locator("#newRuleType").select_option(match_type)
@@ -142,13 +152,32 @@ class DashboardPage:
         self.page.locator("#rulesSearch").fill(query)
 
     def add_store_pair(self, raw: str, normalized: str):
-        self.click_tab("manage")
+        self.click_tab("organize")
         self.page.locator("#newPairRaw").fill(raw)
         self.page.locator("#newPairNorm").fill(normalized)
         self.page.locator("#addPairBtn").click()
 
     def search_pairs(self, query: str):
         self.page.locator("#pairsSearch").fill(query)
+
+    def add_reimburser(
+        self, pattern: str, label: str = "", match_type: str = "substring"
+    ):
+        self.click_tab("reimburse")
+        self.page.locator("#newReimburserPattern").fill(pattern)
+        if label:
+            self.page.locator("#newReimburserLabel").fill(label)
+        self.page.locator("#newReimburserType").select_option(match_type)
+        self.page.locator("#addReimburserBtn").click()
+
+    def create_trip(self, name: str, start_date: str, end_date: str, notes: str = ""):
+        self.click_tab("trips")
+        self.page.locator("#newTripName").fill(name)
+        self.page.locator("#newTripStart").fill(start_date)
+        self.page.locator("#newTripEnd").fill(end_date)
+        if notes:
+            self.page.locator("#newTripNotes").fill(notes)
+        self.page.locator("#createTripBtn").click()
 
     def restore_first_deleted(self):
         self.page.locator("#recycleBody .btn").first.click()

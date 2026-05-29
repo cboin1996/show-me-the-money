@@ -23,6 +23,7 @@ def _txns_to_json(txns: list[Transaction]) -> list[dict]:
             "uuid": t.uuid,
             "linked_to": t.linked_to,
             "adjustment": round(t.adjustment, 2),
+            "deleted_at": t.deleted_at,
         }
         for t in txns
     ]
@@ -503,9 +504,7 @@ def generate_server_html() -> str:
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }
-.header { text-align: center; margin-bottom: 30px; }
-.header h1 { font-size: 28px; color: #f8fafc; letter-spacing: -0.5px; }
-.header p { color: #94a3b8; margin-top: 4px; }
+.header { margin-bottom: 8px; border-bottom: 1px solid #1e293b; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 30px; }
 .card { background: #1e293b; border-radius: 12px; padding: 20px; }
 .card .label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -517,6 +516,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .charts { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-bottom: 30px; }
 .chart-box { background: #1e293b; border-radius: 12px; padding: 20px; }
 .chart-box h2 { font-size: 16px; margin-bottom: 12px; color: #f8fafc; }
+.chart-box canvas { max-height: 280px; }
 .trend-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
 .section { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
 .section h2 { font-size: 16px; margin-bottom: 12px; color: #f8fafc; }
@@ -574,23 +574,25 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
 </head>
 <body>
 
-<div class="header" style="display:flex;align-items:center;justify-content:space-between">
-    <div>
-        <h1>show-me-the-money</h1>
-        <p id="headerSub">Loading...</p>
+<div class="header" style="display:flex;align-items:center;justify-content:space-between;padding:12px 24px">
+    <div style="display:flex;align-items:baseline;gap:16px;flex-wrap:wrap">
+        <span style="font-size:13px;color:#475569;font-weight:500;letter-spacing:0.05em;text-transform:uppercase">smtm</span>
+        <span id="headerSub" style="font-size:13px;color:#64748b">Loading...</span>
     </div>
-    <a href="/api/report/pdf" class="btn btn-outline" data-testid="export-pdf-btn" download="financial_report.pdf" style="white-space:nowrap">Download PDF</a>
+    <a href="/api/report/pdf" class="btn btn-outline" data-testid="export-pdf-btn" download="financial_report.pdf" style="white-space:nowrap;font-size:12px">PDF</a>
 </div>
 
 <div class="cards" id="cards" data-testid="summary-cards"></div>
 
 <div class="tab-bar" id="mainTabs" data-testid="tab-bar">
     <div class="tab active" data-tab="overview" data-testid="tab-overview">Overview</div>
+    <div class="tab" data-tab="transactions" data-testid="tab-transactions">Transactions</div>
+    <div class="tab" data-tab="organize" data-testid="tab-organize">Organize</div>
+    <div class="tab" data-tab="budgets" data-testid="tab-budgets">Budgets</div>
+    <div class="tab" data-tab="reimburse" data-testid="tab-reimburse">Reimburse</div>
+    <div class="tab" data-tab="trips" data-testid="tab-trips">Trips</div>
     <div class="tab" data-tab="analytics" data-testid="tab-analytics">Analytics</div>
     <div class="tab" data-tab="import" data-testid="tab-import">Import</div>
-    <div class="tab" data-tab="categorize" data-testid="tab-categorize">Categorize</div>
-    <div class="tab" data-tab="budgets" data-testid="tab-budgets">Budgets</div>
-    <div class="tab" data-tab="manage" data-testid="tab-manage">Manage</div>
 </div>
 
 <!-- OVERVIEW TAB -->
@@ -607,6 +609,200 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
         <h2>Anomalies <span style="font-size:12px;color:#fbbf24">(transactions &gt; 2x category average)</span></h2>
         <input type="text" id="anomalySearch" placeholder="Search by store or category..." style="width:250px;margin-bottom:12px;background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:6px 12px;border-radius:6px;font-size:13px">
         <div id="anomaliesList"></div>
+    </div>
+</div>
+
+<!-- TRANSACTIONS TAB -->
+<div id="tab-transactions" class="hidden">
+    <div class="filters">
+        <div><label>Search</label><br><input type="text" id="searchInput" placeholder="Store, category..."></div>
+        <div><label>Category</label><br><select id="categoryFilter"><option value="">All</option></select></div>
+        <div><label>Month</label><br><select id="monthFilter"><option value="">All</option></select></div>
+        <div><label>Type</label><br><select id="typeFilter"><option value="">All</option><option value="expense">Expenses</option><option value="income">Income</option><option value="transfer">Transfers</option></select></div>
+        <div><label>From</label><br><input type="date" id="dateFrom" style="width:130px"></div>
+        <div><label>To</label><br><input type="date" id="dateTo" style="width:130px"></div>
+        <div><label>Min $</label><br><input type="number" id="minAmount" style="width:80px" step="0.01"></div>
+        <div><label>Max $</label><br><input type="number" id="maxAmount" style="width:80px" step="0.01"></div>
+        <div style="margin-left:auto;align-self:flex-end"><button class="btn btn-outline" id="exportCsvBtn" data-testid="export-csv-btn">Export CSV</button></div>
+    </div>
+    <div id="bulkBar" class="bulk-bar hidden" data-testid="bulk-bar">
+        <span><span class="count" id="bulkCount">0</span> selected</span>
+        <select id="bulkCatSelect" class="inline-cat-select"><option value="">Assign category...</option></select>
+        <button class="btn btn-sm btn-success" id="bulkCatBtn">Apply</button>
+        <button class="btn btn-sm btn-danger" id="bulkDeleteBtn">Delete Selected</button>
+        <button class="btn btn-sm btn-outline" id="bulkClearBtn">Clear</button>
+    </div>
+    <div class="table-wrap">
+        <div class="txn-count" id="txnCount"></div>
+        <div class="scroll-table">
+            <table id="txnTable" data-testid="txn-table">
+                <thead><tr><th><input type="checkbox" id="selectAll" data-testid="select-all"></th><th data-col="date">Date</th><th data-col="store">Store</th><th data-col="category">Category</th><th data-col="amount">Amount</th><th data-col="type">Type</th><th>Trip</th><th>Actions</th></tr></thead>
+                <tbody id="txnBody" data-testid="txn-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ORGANIZE TAB (merged Categorize + Manage data hygiene) -->
+<div id="tab-organize" class="hidden">
+    <div class="section" style="display:flex;gap:12px;align-items:center;padding:16px 20px">
+        <button class="btn btn-success" id="recatAllBtn" data-testid="recategorize-btn">Re-categorize All Uncategorized</button>
+        <span id="recatResult" data-testid="recategorize-result" style="font-size:13px;color:#94a3b8"></span>
+    </div>
+    <div id="uncategorizedSection" class="section">
+        <h2>Uncategorized Merchants</h2>
+        <p class="subtitle">Select a category to auto-classify all transactions from that merchant</p>
+        <div class="scroll-table"><table><thead><tr><th>Store</th><th>Count</th><th>Total Spend</th><th>Category</th></tr></thead><tbody id="uncatBody"></tbody></table></div>
+    </div>
+    <div id="suggestSection" class="section">
+        <h2>Keyword Suggestions</h2>
+        <p class="subtitle">Auto-detected categories based on store name keywords</p>
+        <div style="margin-bottom:12px"><button class="btn btn-success" id="applyAllSuggBtn">Apply All</button></div>
+        <div class="scroll-table"><table><thead><tr><th>Store</th><th>Suggested</th><th>Amount</th><th>Count</th><th>Actions</th></tr></thead><tbody id="suggestBody"></tbody></table></div>
+    </div>
+    <div class="section">
+        <h2>Category Rules <span id="rulesCount" style="font-size:12px;color:#94a3b8"></span></h2>
+        <p class="subtitle">Rules map store names to categories. <strong>Editing a transaction category also saves a rule</strong> so future imports self-categorize.</p>
+        <div class="form-row">
+            <input type="text" id="newRulePattern" placeholder="Pattern (store name)" list="dl-expense-stores">
+            <select id="newRuleCat"></select>
+            <select id="newRuleType"><option value="exact">exact</option><option value="substring">substring</option></select>
+            <button class="btn" id="addRuleBtn">Add Rule</button>
+            <button class="btn btn-outline btn-sm" id="normalizeRulesBtn" title="Update any rules using raw bank names to use normalized store names instead">Normalize rule patterns</button>
+        </div>
+        <div class="form-row">
+            <input type="text" id="rulesSearch" placeholder="Search rules..." style="width:250px">
+        </div>
+        <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>When...</th><th>Category</th><th>Covers</th></tr></thead><tbody id="rulesBody"></tbody></table></div>
+    </div>
+    <div class="section">
+        <h2>Store Pairs <span id="pairsCount" style="font-size:12px;color:#94a3b8"></span></h2>
+        <p class="subtitle">Map raw bank names to clean merchant names. Changes auto-propagate to all transactions.</p>
+        <div class="form-row">
+            <input type="text" id="newPairRaw" placeholder="Raw name" list="dl-expense-raw">
+            <input type="text" id="newPairNorm" placeholder="Normalized name" list="dl-all-stores">
+            <button class="btn" id="addPairBtn">Add Pair</button>
+        </div>
+        <div class="form-row">
+            <input type="text" id="pairsSearch" placeholder="Search pairs..." style="width:250px">
+        </div>
+        <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Normalized name</th><th></th></tr></thead><tbody id="pairsBody"></tbody></table></div>
+        <h3 style="margin-top:16px;font-size:14px">Suggested Pairs <span id="suggestedPairsCount" style="font-size:12px;color:#94a3b8"></span></h3>
+        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Fuzzy-matched store names that look like the same merchant</p>
+        <button class="btn btn-outline btn-sm" id="discoverStorePairsBtn" style="margin-bottom:8px">Discover Unpaired Stores</button>
+        <div id="suggestedPairsSection" class="hidden">
+            <div class="scroll-table" style="max-height:250px"><table><thead><tr><th>Raw Name</th><th>Suggested Normal</th><th>Txns</th><th></th></tr></thead><tbody id="suggestedPairsBody"></tbody></table></div>
+            <button class="btn btn-success btn-sm" id="acceptAllPairsBtn" style="margin-top:8px">Accept All</button>
+        </div>
+        <h3 style="margin-top:16px;font-size:14px">Duplicate Stores <span id="duplicatesCount" style="font-size:12px;color:#94a3b8"></span></h3>
+        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Normalized names that look like the same merchant (fuzzy match)</p>
+        <button class="btn btn-outline btn-sm" id="detectDuplicatesBtn" style="margin-bottom:8px">Detect Duplicates</button>
+        <div id="duplicatesSection" class="hidden">
+            <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Suggested Name</th><th>Variants</th><th>Txns</th><th></th></tr></thead><tbody id="duplicatesBody"></tbody></table></div>
+            <button class="btn btn-success btn-sm" id="consolidateAllBtn" style="margin-top:8px">Consolidate All</button>
+        </div>
+    </div>
+    <div class="section">
+        <h2>Recycle Bin</h2>
+        <div class="scroll-table"><table><thead><tr><th>Date</th><th>Store / Category</th><th>Amount</th><th>Deleted</th><th></th></tr></thead><tbody id="recycleBody"></tbody></table></div>
+    </div>
+</div>
+
+<!-- BUDGETS TAB -->
+<div id="tab-budgets" class="hidden">
+    <div class="section">
+        <h2>Budget vs Actual</h2>
+        <div class="form-row">
+            <label style="color:#94a3b8;font-size:13px">Month:</label>
+            <select id="budgetMonth"></select>
+        </div>
+        <canvas id="budgetChart" style="max-height:350px"></canvas>
+    </div>
+    <div class="section">
+        <h2>Set Budget</h2>
+        <div class="form-row">
+            <input type="month" id="newBudgetMonth" placeholder="YYYY-MM">
+            <select id="newBudgetCat"></select>
+            <input type="number" id="newBudgetAmt" placeholder="Amount" step="50" style="width:100px">
+            <button class="btn" id="setBudgetBtn">Set</button>
+        </div>
+        <div class="form-row">
+            <input type="month" id="copyFromMonth" placeholder="From">
+            <input type="month" id="copyToMonth" placeholder="To">
+            <button class="btn" id="copyBudgetBtn">Copy Month</button>
+        </div>
+        <div class="scroll-table"><table><thead><tr><th>Month</th><th>Category</th><th>Budget</th><th>Status</th></tr></thead><tbody id="budgetBody"></tbody></table></div>
+    </div>
+</div>
+
+<!-- REIMBURSE TAB -->
+<div id="tab-reimburse" class="hidden">
+    <div class="section">
+        <h2>Reimbursers <span id="reimbursersCount" style="font-size:12px;color:#94a3b8"></span></h2>
+        <p class="subtitle">Track income sources that offset specific expenses (e.g. Canada Life covering wellness costs).</p>
+        <div class="form-row">
+            <input type="text" id="newReimburserPattern" placeholder="Pattern (e.g. canada life)" list="dl-income-stores">
+            <input type="text" id="newReimburserLabel" placeholder="Label (optional)">
+            <select id="newReimburserType"><option value="substring">substring</option><option value="exact">exact</option></select>
+            <button class="btn" id="addReimburserBtn">Add Reimburser</button>
+        </div>
+        <div class="scroll-table" style="max-height:200px"><table><thead><tr><th>Pattern</th><th>Label</th><th>Match</th><th></th></tr></thead><tbody id="reimbursersBody"></tbody></table></div>
+        <h3 style="margin-top:16px;font-size:14px">Reimburser Pairs <span id="reimbPairsCount" style="font-size:12px;color:#94a3b8"></span></h3>
+        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Link a reimburser to the expense they typically cover</p>
+        <div class="form-row">
+            <input type="text" id="newPairReimburser" placeholder="Reimburser pattern (e.g. canada life)" list="dl-income-stores">
+            <input type="text" id="newPairExpense" placeholder="Expense pattern (e.g. humanity wellness)" list="dl-expense-stores">
+            <button class="btn" id="addReimbPairBtn">Add Pair</button>
+            <button class="btn btn-outline" id="discoverPairsBtn">Discover from History</button>
+        </div>
+        <div class="scroll-table" style="max-height:150px"><table><thead><tr><th>Reimburser</th><th>Expense</th><th></th></tr></thead><tbody id="reimburserPairsBody"></tbody></table></div>
+        <div id="discoveredPairs" class="hidden" style="margin-top:12px">
+            <h4 style="font-size:13px;color:#fbbf24;margin-bottom:8px">Discovered Patterns</h4>
+            <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Pattern &amp; examples</th><th></th></tr></thead><tbody id="discoveredPairsBody"></tbody></table></div>
+            <button class="btn btn-success btn-sm" id="acceptAllDiscoveredBtn" style="margin-top:8px">Accept All</button>
+        </div>
+        <h3 style="margin-top:16px;font-size:14px">Pending Reimbursements</h3>
+        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Income from known reimbursers not yet linked to an expense.</p>
+        <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Date</th><th>From</th><th>Amount</th><th>Suggested Expense</th><th>Actions</th></tr></thead><tbody id="pendingReimbBody" data-testid="pending-reimb-body"></tbody></table></div>
+    </div>
+</div>
+
+<!-- TRIPS TAB -->
+<div id="tab-trips" class="hidden">
+    <div class="section">
+        <h2>Trips</h2>
+        <p class="subtitle">Tag a date range as a trip to track shared expenses and calculate splits.</p>
+        <div class="form-row">
+            <input type="text" id="newTripName" placeholder="Trip name (e.g. Pemberton Weekend)">
+            <input type="date" id="newTripStart">
+            <input type="date" id="newTripEnd">
+            <input type="text" id="newTripNotes" placeholder="Notes (optional)" style="width:160px">
+            <button class="btn btn-success" id="createTripBtn">Create &amp; Auto-assign</button>
+        </div>
+        <div style="margin-top:8px">
+            <label style="font-size:12px;color:#94a3b8;display:block;margin-bottom:4px">Exclude from trip totals:</label>
+            <div id="newTripExcludedCats" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+        </div>
+        <div class="scroll-table" style="margin-top:16px"><table><thead><tr><th>Name</th><th>Dates</th><th>Txns</th><th>Total Spend</th><th>Notes</th><th></th></tr></thead><tbody id="tripsBody"></tbody></table></div>
+    </div>
+    <div id="tripDetailSection" class="section hidden">
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px">
+            <h2 id="tripDetailName" style="margin:0"></h2>
+            <span id="tripDetailDates" style="font-size:13px;color:#94a3b8"></span>
+            <button class="btn btn-sm btn-outline" onclick="App.closeTripDetail()">&#x2715; Close</button>
+        </div>
+        <div style="display:flex;gap:16px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
+            <span id="tripDetailTotal" style="font-size:18px;font-weight:600;color:#f87171"></span>
+            <span style="font-size:13px;color:#94a3b8">Split:</span>
+            <input type="number" id="tripSplitPct" value="60" min="0" max="100" step="5" style="width:60px;background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:4px 8px;border-radius:4px;font-size:13px"> <span style="font-size:13px;color:#94a3b8">% your share</span>
+            <span id="tripSplitResult" style="font-size:15px;font-weight:600;color:#4ade80"></span>
+        </div>
+        <div style="margin-bottom:12px">
+            <label style="font-size:12px;color:#94a3b8;display:block;margin-bottom:4px">Exclude from totals:</label>
+            <div id="tripExcludedCats" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+            <button class="btn btn-sm btn-outline" id="saveTripExclusionsBtn" style="margin-top:6px">Save exclusions &amp; recompute</button>
+        </div>
+        <div class="scroll-table"><table><thead><tr><th>Date</th><th>Store</th><th>Category</th><th>Amount</th><th></th></tr></thead><tbody id="tripTxnBody"></tbody></table></div>
     </div>
 </div>
 
@@ -654,156 +850,6 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
     </div>
 </div>
 
-<!-- CATEGORIZE TAB -->
-<div id="tab-categorize" class="hidden">
-    <div class="section" style="display:flex;gap:12px;align-items:center;padding:16px 20px">
-        <button class="btn btn-success" id="recatAllBtn" data-testid="recategorize-btn">Re-categorize All Uncategorized</button>
-        <span id="recatResult" data-testid="recategorize-result" style="font-size:13px;color:#94a3b8"></span>
-    </div>
-    <div id="uncategorizedSection" class="section">
-        <h2>Uncategorized Merchants</h2>
-        <p class="subtitle">Select a category to auto-classify all transactions from that merchant</p>
-        <div class="scroll-table"><table><thead><tr><th>Store</th><th>Count</th><th>Total Spend</th><th>Category</th></tr></thead><tbody id="uncatBody"></tbody></table></div>
-    </div>
-    <div id="suggestSection" class="section">
-        <h2>Keyword Suggestions</h2>
-        <p class="subtitle">Auto-detected categories based on store name keywords</p>
-        <div style="margin-bottom:12px"><button class="btn btn-success" id="applyAllSuggBtn">Apply All</button></div>
-        <div class="scroll-table"><table><thead><tr><th>Store</th><th>Suggested</th><th>Amount</th><th>Count</th><th>Actions</th></tr></thead><tbody id="suggestBody"></tbody></table></div>
-    </div>
-    <div class="section">
-        <h2>Category Rules <span id="rulesCount" style="font-size:12px;color:#94a3b8"></span></h2>
-        <div class="form-row">
-            <input type="text" id="newRulePattern" placeholder="Pattern (store name)" list="dl-expense-stores">
-            <select id="newRuleCat"></select>
-            <select id="newRuleType"><option value="exact">exact</option><option value="substring">substring</option></select>
-            <button class="btn" id="addRuleBtn">Add Rule</button>
-        </div>
-        <div class="form-row">
-            <input type="text" id="rulesSearch" placeholder="Search rules..." style="width:250px">
-        </div>
-        <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Pattern</th><th>Category</th><th>Match Type</th></tr></thead><tbody id="rulesBody"></tbody></table></div>
-    </div>
-</div>
-
-<!-- BUDGETS TAB -->
-<div id="tab-budgets" class="hidden">
-    <div class="section">
-        <h2>Budget vs Actual</h2>
-        <div class="form-row">
-            <label style="color:#94a3b8;font-size:13px">Month:</label>
-            <select id="budgetMonth"></select>
-        </div>
-        <canvas id="budgetChart" style="max-height:350px"></canvas>
-    </div>
-    <div class="section">
-        <h2>Set Budget</h2>
-        <div class="form-row">
-            <input type="month" id="newBudgetMonth" placeholder="YYYY-MM">
-            <select id="newBudgetCat"></select>
-            <input type="number" id="newBudgetAmt" placeholder="Amount" step="50" style="width:100px">
-            <button class="btn" id="setBudgetBtn">Set</button>
-        </div>
-        <div class="form-row">
-            <input type="month" id="copyFromMonth" placeholder="From">
-            <input type="month" id="copyToMonth" placeholder="To">
-            <button class="btn" id="copyBudgetBtn">Copy Month</button>
-        </div>
-        <div class="scroll-table"><table><thead><tr><th>Month</th><th>Category</th><th>Budget</th><th>Status</th></tr></thead><tbody id="budgetBody"></tbody></table></div>
-    </div>
-</div>
-
-<!-- MANAGE TAB -->
-<div id="tab-manage" class="hidden">
-    <div class="section">
-        <h2>Store Pairs <span id="pairsCount" style="font-size:12px;color:#94a3b8"></span></h2>
-        <div class="form-row">
-            <input type="text" id="newPairRaw" placeholder="Raw name" list="dl-expense-raw">
-            <input type="text" id="newPairNorm" placeholder="Normalized name" list="dl-all-stores">
-            <button class="btn" id="addPairBtn">Add Pair</button>
-        </div>
-        <div class="form-row">
-            <input type="text" id="pairsSearch" placeholder="Search pairs..." style="width:250px">
-        </div>
-        <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Raw Name</th><th>Normalized</th><th></th></tr></thead><tbody id="pairsBody"></tbody></table></div>
-        <h3 style="margin-top:16px;font-size:14px">Suggested Pairs <span id="suggestedPairsCount" style="font-size:12px;color:#94a3b8"></span></h3>
-        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Fuzzy-matched store names that look like the same merchant</p>
-        <button class="btn btn-outline btn-sm" id="discoverStorePairsBtn" style="margin-bottom:8px">Discover Unpaired Stores</button>
-        <div id="suggestedPairsSection" class="hidden">
-            <div class="scroll-table" style="max-height:250px"><table><thead><tr><th>Raw Name</th><th>Suggested Normal</th><th>Txns</th><th></th></tr></thead><tbody id="suggestedPairsBody"></tbody></table></div>
-            <button class="btn btn-success btn-sm" id="acceptAllPairsBtn" style="margin-top:8px">Accept All</button>
-        </div>
-        <h3 style="margin-top:16px;font-size:14px">Duplicate Stores <span id="duplicatesCount" style="font-size:12px;color:#94a3b8"></span></h3>
-        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Normalized names that look like the same merchant (fuzzy match)</p>
-        <button class="btn btn-outline btn-sm" id="detectDuplicatesBtn" style="margin-bottom:8px">Detect Duplicates</button>
-        <div id="duplicatesSection" class="hidden">
-            <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Suggested Name</th><th>Variants</th><th>Txns</th><th></th></tr></thead><tbody id="duplicatesBody"></tbody></table></div>
-            <button class="btn btn-success btn-sm" id="consolidateAllBtn" style="margin-top:8px">Consolidate All</button>
-        </div>
-    </div>
-    <div class="section">
-        <h2>Reimbursers <span id="reimbursersCount" style="font-size:12px;color:#94a3b8"></span></h2>
-        <div class="form-row">
-            <input type="text" id="newReimburserPattern" placeholder="Pattern (e.g. friend name)" list="dl-income-stores">
-            <input type="text" id="newReimburserLabel" placeholder="Label (optional)">
-            <select id="newReimburserType"><option value="substring">substring</option><option value="exact">exact</option></select>
-            <button class="btn" id="addReimburserBtn">Add Reimburser</button>
-        </div>
-        <div class="scroll-table" style="max-height:200px"><table><thead><tr><th>Pattern</th><th>Label</th><th>Match</th><th></th></tr></thead><tbody id="reimbursersBody"></tbody></table></div>
-        <h3 style="margin-top:16px;font-size:14px">Reimburser Pairs <span id="reimbPairsCount" style="font-size:12px;color:#94a3b8"></span></h3>
-        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Link a reimburser to the expense they typically cover</p>
-        <div class="form-row">
-            <input type="text" id="newPairReimburser" placeholder="Reimburser pattern (e.g. canada life)" list="dl-income-stores">
-            <input type="text" id="newPairExpense" placeholder="Expense pattern (e.g. humanity wellness)" list="dl-expense-stores">
-            <button class="btn" id="addReimbPairBtn">Add Pair</button>
-            <button class="btn btn-outline" id="discoverPairsBtn">Discover from History</button>
-        </div>
-        <div class="scroll-table" style="max-height:150px"><table><thead><tr><th>Reimburser</th><th>Expense</th><th></th></tr></thead><tbody id="reimburserPairsBody"></tbody></table></div>
-        <div id="discoveredPairs" class="hidden" style="margin-top:12px">
-            <h4 style="font-size:13px;color:#fbbf24;margin-bottom:8px">Discovered Patterns</h4>
-            <div class="scroll-table" style="max-height:150px"><table><thead><tr><th>Reimburser</th><th>Expense</th><th>Links</th><th></th></tr></thead><tbody id="discoveredPairsBody"></tbody></table></div>
-            <button class="btn btn-success btn-sm" id="acceptAllDiscoveredBtn" style="margin-top:8px">Accept All</button>
-        </div>
-        <h3 style="margin-top:16px;font-size:14px">Pending Reimbursements</h3>
-        <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Income from known reimbursers not yet linked to an expense. Suggested matches shown when pairs are configured.</p>
-        <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Date</th><th>From</th><th>Amount</th><th>Suggested Expense</th><th>Actions</th></tr></thead><tbody id="pendingReimbBody" data-testid="pending-reimb-body"></tbody></table></div>
-    </div>
-    <div class="section">
-        <h2>Recycle Bin</h2>
-        <div class="scroll-table"><table><thead><tr><th>Date</th><th>Store</th><th>Amount</th><th>Actions</th></tr></thead><tbody id="recycleBody"></tbody></table></div>
-    </div>
-</div>
-
-<!-- TRANSACTION TABLE (always visible below tabs) -->
-<div class="filters">
-    <div><label>Search</label><br><input type="text" id="searchInput" placeholder="Store, category..."></div>
-    <div><label>Category</label><br><select id="categoryFilter"><option value="">All</option></select></div>
-    <div><label>Month</label><br><select id="monthFilter"><option value="">All</option></select></div>
-    <div><label>Type</label><br><select id="typeFilter"><option value="">All</option><option value="expense">Expenses</option><option value="income">Income</option></select></div>
-    <div><label>From</label><br><input type="date" id="dateFrom" style="width:130px"></div>
-    <div><label>To</label><br><input type="date" id="dateTo" style="width:130px"></div>
-    <div><label>Min $</label><br><input type="number" id="minAmount" style="width:80px" step="0.01"></div>
-    <div><label>Max $</label><br><input type="number" id="maxAmount" style="width:80px" step="0.01"></div>
-    <div style="margin-left:auto;align-self:flex-end"><button class="btn btn-outline" id="exportCsvBtn" data-testid="export-csv-btn">Export CSV</button></div>
-</div>
-<div id="bulkBar" class="bulk-bar hidden" data-testid="bulk-bar">
-    <span><span class="count" id="bulkCount">0</span> selected</span>
-    <select id="bulkCatSelect" class="inline-cat-select"><option value="">Assign category...</option></select>
-    <button class="btn btn-sm btn-success" id="bulkCatBtn">Apply</button>
-    <button class="btn btn-sm btn-danger" id="bulkDeleteBtn">Delete Selected</button>
-    <button class="btn btn-sm btn-outline" id="bulkClearBtn">Clear</button>
-</div>
-<div class="table-wrap">
-    <h2>Transactions</h2>
-    <div class="txn-count" id="txnCount"></div>
-    <div class="scroll-table">
-        <table id="txnTable" data-testid="txn-table">
-            <thead><tr><th><input type="checkbox" id="selectAll" data-testid="select-all"></th><th data-col="date">Date</th><th data-col="store">Store</th><th data-col="category">Category</th><th data-col="amount">Amount</th><th data-col="type">Type</th><th>Actions</th></tr></thead>
-            <tbody id="txnBody" data-testid="txn-body"></tbody>
-        </table>
-    </div>
-</div>
-
 <datalist id="dl-expense-stores"></datalist>
 <datalist id="dl-expense-raw"></datalist>
 <datalist id="dl-income-stores"></datalist>
@@ -834,15 +880,16 @@ async function apiPost(path, data) {
 
 // --- App State ---
 const App = {
-    data: { transactions: [], summary: {}, budgets: [], rules: [], storePairs: {}, history: [], anomalies: [], uncategorized: [], suggestions: [], deleted: [], analytics: {} },
+    data: { transactions: [], summary: {}, budgets: [], rules: [], storePairs: {}, history: [], anomalies: [], uncategorized: [], suggestions: [], deleted: [], analytics: {}, trips: [] },
     charts: {},
+    _currentTrip: null,
 
     _txnPage: 0,
     _txnPageSize: 500,
     _txnTotal: 0,
 
     async init() {
-        const [txns, overview, budgets, rules, pairs, history, uncat, suggest, deleted, reimbursers, pendingReimb, reimburserPairs, stores] = await Promise.all([
+        const [txns, overview, budgets, rules, pairs, history, uncat, suggest, deleted, reimbursers, pendingReimb, reimburserPairs, stores, trips] = await Promise.all([
             api(`/api/transactions?offset=0&limit=${this._txnPageSize}`),
             api('/api/overview'),
             api('/api/budgets'),
@@ -851,6 +898,7 @@ const App = {
             api('/api/transactions/deleted'),
             api('/api/reimbursers'), api('/api/reimbursements/pending'),
             api('/api/reimburser-pairs'), api('/api/stores'),
+            api('/api/trips'),
         ]);
         this.data.transactions = txns.transactions || [];
         this._txnTotal = txns.total || this.data.transactions.length;
@@ -870,6 +918,7 @@ const App = {
         this.data.reimburserPairs = reimburserPairs.pairs || [];
         this.data.expenseStores = stores.expenses || [];
         this.data.incomeStores = stores.income || [];
+        this.data.trips = trips.trips || [];
         this.renderAll();
         this.populateDataLists();
     },
@@ -910,14 +959,35 @@ const App = {
         this.renderReimbursers();
         this.renderHistory();
         this.renderRecycleBin();
+        this.renderTrips();
+        this.renderTripCreateExcludes();
         this.populateFilters();
         this.renderTable();
     },
 
+    renderTripCreateExcludes(currentExcluded) {
+        const cats = this.data.summary.categories || [];
+        const excluded = currentExcluded !== undefined ? currentExcluded : ['Investments'];
+        const excludedSet = new Set(excluded);
+        const container = document.getElementById('newTripExcludedCats');
+        if (container) {
+            container.innerHTML = cats.map(c =>
+                `<label style="font-size:12px;color:#cbd5e1"><input type="checkbox" value="${c}" ${excludedSet.has(c)?'checked':''}> ${c}</label>`
+            ).join(' ');
+        }
+    },
+
     renderHeader() {
         const s = this.data.summary;
-        document.getElementById('headerSub').textContent =
-            `${s.date_min || '?'} to ${s.date_max || '?'} · ${s.num_months || 0} months · ${s.total_transactions || 0} transactions`;
+        const net = (s.net_savings || 0);
+        const netColor = net >= 0 ? '#4ade80' : '#f87171';
+        const netStr = (net >= 0 ? '+' : '') + '$' + Math.abs(net).toLocaleString(undefined, {maximumFractionDigits: 0});
+        document.getElementById('headerSub').innerHTML =
+            `<span>${s.date_min || '?'} – ${s.date_max || '?'}</span>`
+            + ` <span style="color:#334155">·</span> `
+            + `<span style="color:${netColor};font-weight:600">${netStr}</span> net`
+            + ` <span style="color:#334155">·</span> `
+            + `<span>${s.total_transactions || 0} transactions</span>`;
     },
 
     renderCards() {
@@ -1211,9 +1281,13 @@ const App = {
         const filtered = this.data.rules.filter(r => !search || r.pattern.toLowerCase().includes(search) || r.category.toLowerCase().includes(search));
         document.getElementById('rulesCount').textContent = `(${filtered.length}/${this.data.rules.length})`;
         const body = document.getElementById('rulesBody');
-        body.innerHTML = filtered.map(r =>
-            `<tr><td>${r.pattern}</td><td>${catBadge(r.category)}</td><td>${r.match_type}</td></tr>`
-        ).join('');
+        body.innerHTML = filtered.map(r => {
+            const desc = r.match_type === 'exact'
+                ? `store matches <code style="font-size:11px;background:#0f172a;padding:1px 4px;border-radius:3px">${r.pattern}</code>`
+                : `store contains <code style="font-size:11px;background:#0f172a;padding:1px 4px;border-radius:3px">${r.pattern}</code>`;
+            const count = r.txn_count != null ? `<span style="font-size:11px;color:#94a3b8">${r.txn_count} txn${r.txn_count===1?'':'s'}</span>` : '';
+            return `<tr><td style="font-size:12px">${desc}</td><td>${catBadge(r.category)}</td><td>${count}</td></tr>`;
+        }).join('');
         const catSel = document.getElementById('newRuleCat');
         catSel.innerHTML = (this.data.summary.categories||[]).map(c=>`<option value="${c}">${c}</option>`).join('');
     },
@@ -1221,12 +1295,63 @@ const App = {
     renderStorePairs(filter) {
         const search = (filter || document.getElementById('pairsSearch').value || '').toLowerCase();
         const pairs = this.data.storePairs;
-        const entries = Object.entries(pairs).filter(([raw, norm]) => !search || raw.toLowerCase().includes(search) || norm.toLowerCase().includes(search));
-        document.getElementById('pairsCount').textContent = `(${entries.length}/${Object.keys(pairs).length})`;
+        const allEntries = Object.entries(pairs);
+
+        // Group by normalized name
+        const byNorm = {};
+        for (const [raw, norm] of allEntries) {
+            if (!byNorm[norm]) byNorm[norm] = [];
+            byNorm[norm].push(raw);
+        }
+
+        // Filter groups: keep if norm or any raw matches search
+        const filteredGroups = Object.entries(byNorm).filter(([norm, raws]) => {
+            if (!search) return true;
+            return norm.toLowerCase().includes(search) || raws.some(r => r.toLowerCase().includes(search));
+        });
+        filteredGroups.sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+
+        const matchedRaws = search
+            ? filteredGroups.reduce((n, [, raws]) => n + raws.filter(r => r.toLowerCase().includes(search) || !search).length, 0)
+            : allEntries.length;
+        document.getElementById('pairsCount').textContent = `(${filteredGroups.length} groups / ${matchedRaws} pairs)`;
+
         const body = document.getElementById('pairsBody');
-        body.innerHTML = entries.map(([raw, norm]) =>
-            `<tr><td style="font-size:12px">${raw}</td><td><input type="text" value="${norm}" data-raw="${raw.replace(/"/g,'&quot;')}" class="pair-norm-input" style="width:100%;background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:4px 8px;border-radius:4px;font-size:12px" list="dl-all-stores"></td><td style="white-space:nowrap"><button class="btn btn-sm btn-success" onclick="App.savePair(this)">Save</button> <button class="btn btn-sm btn-danger" onclick="App.deletePair('${raw.replace(/'/g,"\\'")}')">Del</button></td></tr>`
-        ).join('');
+        body.innerHTML = filteredGroups.map(([norm, raws]) => {
+            const rawsHtml = raws.map(raw => {
+                const dimmed = search && !raw.toLowerCase().includes(search) && !norm.toLowerCase().includes(search) ? 'opacity:0.4;' : '';
+                return `<tr style="${dimmed}background:#0c1929">
+                    <td style="padding-left:24px;font-size:11px;color:#94a3b8;font-family:monospace">${raw}</td>
+                    <td style="white-space:nowrap">
+                        <button class="btn btn-sm btn-danger" onclick="App.deletePair('${raw.replace(/'/g,"\\'")}')">Del</button>
+                    </td>
+                </tr>`;
+            }).join('');
+            return `<tr style="background:#0f172a">
+                <td>
+                    <input type="text" value="${norm}" data-norm="${norm.replace(/"/g,'&quot;')}" class="norm-rename-input"
+                        style="width:220px;background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 8px;border-radius:4px;font-size:13px;font-weight:500" list="dl-all-stores">
+                    <span style="font-size:11px;color:#64748b;margin-left:8px">${raws.length} raw name${raws.length>1?'s':''}</span>
+                </td>
+                <td style="white-space:nowrap">
+                    <button class="btn btn-sm btn-success" onclick="App.renameNorm(this)">Rename all</button>
+                </td>
+            </tr>${rawsHtml}`;
+        }).join('');
+    },
+
+    async renameNorm(btn) {
+        const input = btn.parentElement.parentElement.querySelector('.norm-rename-input');
+        const oldNorm = input.dataset.norm;
+        const newNorm = input.value.trim();
+        if (!newNorm || newNorm === oldNorm) return;
+        const pairs = this.data.storePairs;
+        const raws = Object.entries(pairs).filter(([, n]) => n === oldNorm).map(([r]) => r);
+        for (const raw of raws) {
+            await apiPost('/api/store-pairs', {raw_name: raw, normalized_name: newNorm});
+        }
+        toast(`Renamed "${oldNorm}" → "${newNorm}" (${raws.length} pairs)`);
+        await this.refresh();
     },
 
     async savePair(btn) {
@@ -1374,12 +1499,30 @@ const App = {
     async discoverPairs() {
         const data = await api('/api/reimburser-pairs/discover');
         const discovered = data.discovered || [];
-        if (!discovered.length) { toast('No patterns discovered from history'); return; }
+        if (!discovered.length) { toast('No patterns discovered — link some income transactions to expenses first'); return; }
         this._discoveredPairs = discovered;
         const body = document.getElementById('discoveredPairsBody');
-        body.innerHTML = discovered.map((d, i) =>
-            `<tr><td>${d.reimburser_pattern}</td><td>${d.expense_pattern}</td><td>${d.link_count}</td><td><button class="btn btn-sm btn-success" onclick="App.acceptDiscovered(${i})">Accept</button></td></tr>`
-        ).join('');
+        body.innerHTML = discovered.map((d, i) => {
+            const examples = (d.examples || []).map(e =>
+                `<div style="font-size:11px;color:#94a3b8;padding:2px 0">
+                    <span style="color:#4ade80">+$${e.income_amount.toFixed(2)}</span> ${e.income_store} on ${e.income_date}
+                    &rarr; <span style="color:#f87171">-$${e.expense_amount.toFixed(2)}</span> ${e.expense_store} (${e.expense_category}) on ${e.expense_date}
+                </div>`
+            ).join('');
+            const alreadySaved = (this.data.reimburserPairs||[]).some(p => p.reimburser_pattern === d.reimburser_pattern && p.expense_pattern === d.expense_pattern);
+            return `<tr>
+                <td>
+                    <div style="font-weight:500">${d.reimburser_pattern} &rarr; ${d.expense_pattern}</div>
+                    <div style="font-size:11px;color:#64748b">${d.link_count} linked transaction${d.link_count>1?'s':''}</div>
+                    ${examples}
+                </td>
+                <td style="vertical-align:top;white-space:nowrap">
+                    ${alreadySaved
+                        ? `<span style="font-size:11px;color:#4ade80">&#x2713; Saved</span>`
+                        : `<button class="btn btn-sm btn-success" onclick="App.acceptDiscovered(${i})">Save rule</button>`}
+                </td>
+            </tr>`;
+        }).join('');
         document.getElementById('discoveredPairs').classList.remove('hidden');
     },
 
@@ -1425,10 +1568,22 @@ const App = {
 
     renderRecycleBin() {
         const body = document.getElementById('recycleBody');
-        body.innerHTML = this.data.deleted.map(t =>
-            `<tr><td>${t.date}</td><td>${t.store_normalized}</td><td>$${t.amount.toFixed(2)}</td>
-             <td><button class="btn btn-sm" onclick="App.restoreTxn('${t.uuid}')">Restore</button></td></tr>`
-        ).join('');
+        body.innerHTML = this.data.deleted.map(t => {
+            const linkedInfo = t.linked_to
+                ? `<span style="font-size:11px;color:#f59e0b" title="Has linked reimbursement — restoring won't restore the link">&#x26A0; was linked</span>`
+                : '';
+            const deletedWhen = t.deleted_at ? `<span style="font-size:11px;color:#64748b">deleted ${t.deleted_at}</span>` : '';
+            return `<tr>
+                <td>${t.date}</td>
+                <td>
+                    <div>${t.store_normalized}</div>
+                    <div style="font-size:11px;color:#64748b">${t.category || 'Uncategorized'} · ${t.source_file}</div>
+                </td>
+                <td style="color:#f87171">-$${t.amount.toFixed(2)}</td>
+                <td>${deletedWhen} ${linkedInfo}</td>
+                <td><button class="btn btn-sm" onclick="App.restoreTxn('${t.uuid}')">Restore</button></td>
+            </tr>`;
+        }).join('');
     },
 
     async restoreTxn(uuid) {
@@ -1441,6 +1596,118 @@ const App = {
         await api(`/api/transactions/${uuid}`, {method:'DELETE'});
         toast('Transaction deleted');
         await this.refresh();
+    },
+
+    renderTrips() {
+        const body = document.getElementById('tripsBody');
+        if (!body) return;
+        if (!this.data.trips.length) {
+            body.innerHTML = '<tr><td colspan="6" style="color:#94a3b8;text-align:center;padding:24px">No trips yet. Create one above.</td></tr>';
+            return;
+        }
+        body.innerHTML = this.data.trips.map(t =>
+            `<tr>
+                <td><button class="btn btn-sm btn-outline" onclick="App.openTrip(${t.id})">${t.name}</button></td>
+                <td style="font-size:12px;color:#94a3b8">${t.start_date} – ${t.end_date}</td>
+                <td>${t.txn_count}</td>
+                <td style="color:#f87171">$${(t.total_spend||0).toFixed(2)}</td>
+                <td style="font-size:12px;color:#64748b">${t.notes||''}</td>
+                <td><button class="btn btn-sm btn-danger" onclick="App.deleteTrip(${t.id})">Del</button></td>
+            </tr>`
+        ).join('');
+    },
+
+    async openTrip(tripId) {
+        const data = await api(`/api/trips/${tripId}`);
+        this._currentTrip = data;
+        const sec = document.getElementById('tripDetailSection');
+        document.getElementById('tripDetailName').textContent = data.trip.name;
+        document.getElementById('tripDetailDates').textContent = `${data.trip.start_date} – ${data.trip.end_date}`;
+
+        // Render excluded category checkboxes for this trip
+        const cats = this.data.summary.categories || [];
+        const excluded = data.trip.excluded_categories || [];
+        const excludedSet = new Set(excluded);
+        const excContainer = document.getElementById('tripExcludedCats');
+        if (excContainer) {
+            excContainer.innerHTML = cats.map(c =>
+                `<label style="font-size:12px;color:#cbd5e1"><input type="checkbox" value="${c}" ${excludedSet.has(c)?'checked':''}> ${c}</label>`
+            ).join(' ');
+        }
+        document.getElementById('saveTripExclusionsBtn').onclick = () => App.saveTripExclusions(tripId);
+
+        const txns = data.transactions || [];
+        this._renderTripSplit(txns);
+        document.getElementById('tripTxnBody').innerHTML = txns.map(t =>
+            `<tr${t.is_solo ? ' style="background:#1e2d1e"' : ''}>
+                <td>${t.date}</td>
+                <td>${t.store_normalized||t.store_raw}</td>
+                <td>${catBadge(t.category)}</td>
+                <td style="color:#f87171">-$${t.amount.toFixed(2)}</td>
+                <td style="white-space:nowrap">
+                    <button class="btn btn-sm ${t.is_solo?'btn-success':'btn-outline'}" title="${t.is_solo?'Just you — click to split':'Split — click to mark as just you'}" onclick="App.toggleTripSolo(${tripId},'${t.uuid}')">
+                        ${t.is_solo ? '&#x1F464; Just me' : '&#x1F465; Split'}
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="App.removeTripTxn(${tripId},'${t.uuid}')">Remove</button>
+                </td>
+            </tr>`
+        ).join('');
+        sec.classList.remove('hidden');
+        document.getElementById('tripSplitPct').oninput = () => {
+            this._renderTripSplit(this._currentTrip?.transactions || []);
+        };
+    },
+
+    async saveTripExclusions(tripId) {
+        const excluded = [...document.querySelectorAll('#tripExcludedCats input:checked')].map(el => el.value);
+        const trip = this._currentTrip?.trip;
+        if (!trip) return;
+        await apiPost(`/api/trips/${tripId}`, {
+            name: trip.name, start_date: trip.start_date,
+            end_date: trip.end_date, notes: trip.notes || '',
+            excluded_categories: excluded,
+        });
+        toast(`Exclusions saved. Reloading trip...`);
+        await this.openTrip(tripId);
+        const d = await api('/api/trips');
+        this.data.trips = d.trips || [];
+        this.renderTrips();
+    },
+
+    _renderTripSplit(txns) {
+        const pct = parseFloat(document.getElementById('tripSplitPct').value) || 60;
+        const total = txns.reduce((s, t) => s + t.amount, 0);
+        const soloTotal = txns.filter(t => t.is_solo).reduce((s, t) => s + t.amount, 0);
+        const splitTotal = txns.filter(t => !t.is_solo).reduce((s, t) => s + t.amount, 0);
+        const mine = soloTotal + splitTotal * pct / 100;
+        const theirs = splitTotal * (1 - pct / 100);
+        document.getElementById('tripDetailTotal').textContent = `Total: $${total.toFixed(2)}`;
+        document.getElementById('tripSplitResult').textContent =
+            `You: $${mine.toFixed(2)} · Partner: $${theirs.toFixed(2)}`;
+    },
+
+    closeTripDetail() {
+        document.getElementById('tripDetailSection').classList.add('hidden');
+        this._currentTrip = null;
+    },
+
+    async deleteTrip(tripId) {
+        await api(`/api/trips/${tripId}`, {method:'DELETE'});
+        toast('Trip deleted');
+        await this.refresh();
+    },
+
+    async toggleTripSolo(tripId, txnUuid) {
+        await apiPost(`/api/trips/${tripId}/transactions/${txnUuid}/toggle-solo`, {});
+        await this.openTrip(tripId);
+    },
+
+    async removeTripTxn(tripId, txnUuid) {
+        await api(`/api/trips/${tripId}/transactions/${txnUuid}`, {method:'DELETE'});
+        await this.openTrip(tripId);
+        const data = await api('/api/trips');
+        this.data.trips = data.trips || [];
+        this.renderTrips();
     },
 
     showLinkModal(expenseUuid) {
@@ -1535,14 +1802,23 @@ const App = {
                 : hasOffset
                 ? `<button class="btn btn-sm btn-outline" onclick="App.unlinkTxn('${t.uuid}')" title="Remove offset" style="color:#f59e0b">Ulk</button>`
                 : '';
-            return `<tr${hasOffset ? ' style="background:#fefce8"' : ''}>
+            const tripNames = (this.data.trips||[]).filter(trip => {
+                return trip.start_date <= t.date && t.date <= trip.end_date;
+            }).map(trip => `<span style="font-size:11px;background:#1e3a5f;color:#93c5fd;padding:1px 6px;border-radius:4px;cursor:pointer" onclick="App.openTrip(${trip.id})">${trip.name}</span>`).join(' ');
+            const isTransfer = t.type === 'transfer';
+            const transferBtn = t.type !== 'income'
+                ? `<button class="btn btn-sm btn-outline" style="${isTransfer?'color:#a78bfa':'color:#64748b'}" title="${isTransfer?'Mark as expense':'Mark as transfer (exclude from totals)'}" onclick="App.toggleTransfer('${t.uuid}','${t.type}')">${isTransfer?'Xfr&#x2713;':'Xfr'}</button>`
+                : '';
+            const rowBg = isTransfer ? ' style="opacity:0.5"' : hasOffset ? ' style="background:#1c2a1a"' : '';
+            return `<tr${rowBg}>
                 <td><input type="checkbox" data-uuid="${t.uuid}" ${checked} onchange="App.toggleSelect('${t.uuid}', this.checked)"></td>
                 <td>${t.date}</td>
                 <td title="${t.store_raw}">${t.store_normalized}</td>
-                <td>${catBadge(t.category)} <select class="inline-cat-select" onchange="App.inlineCategory('${t.uuid}', this.value)"><option value="">edit</option>${catOpts}</select></td>
+                <td>${catBadge(t.category)} <select class="inline-cat-select" onchange="App.inlineCategory('${t.uuid}', '${(t.store_normalized||t.store_raw).replace(/'/g,"\\'")}', this.value)"><option value="">edit</option>${catOpts}</select></td>
                 <td style="text-align:right;font-variant-numeric:tabular-nums">${t.type==='income'?'+':'-'}${amtDisplay}</td>
                 <td>${t.type}</td>
-                <td style="display:flex;gap:4px">${linkBtn}<button class="btn btn-sm btn-danger" onclick="App.deleteTxn('${t.uuid}')">Del</button></td>
+                <td>${tripNames}</td>
+                <td style="display:flex;gap:4px">${transferBtn}${linkBtn}<button class="btn btn-sm btn-danger" onclick="App.deleteTxn('${t.uuid}')">Del</button></td>
             </tr>`;
         }).join('');
         document.getElementById('selectAll').checked = false;
@@ -1594,10 +1870,20 @@ const App = {
         await this.refresh();
     },
 
-    async inlineCategory(uuid, category) {
+    async inlineCategory(uuid, store, category) {
         if (!category) return;
         await api(`/api/transactions/${uuid}/category`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({category})});
-        toast(`Updated category to ${category}`);
+        if (store) {
+            await apiPost('/api/rules', {pattern: store, category, match_type: 'exact'});
+        }
+        toast(`${store || uuid} → ${category} (rule saved)`);
+        await this.refresh();
+    },
+
+    async toggleTransfer(uuid, currentType) {
+        const newType = currentType === 'transfer' ? 'expense' : 'transfer';
+        await api(`/api/transactions/${uuid}/type`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type: newType})});
+        toast(newType === 'transfer' ? 'Marked as transfer — excluded from totals' : 'Marked as expense');
         await this.refresh();
     },
 
@@ -1611,11 +1897,12 @@ const App = {
 };
 
 // --- Tab switching ---
+const ALL_TABS = ['overview','transactions','organize','budgets','reimburse','trips','analytics','import'];
 document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
-        ['overview','analytics','import','categorize','budgets','manage'].forEach(name => {
+        ALL_TABS.forEach(name => {
             document.getElementById('tab-'+name).classList.toggle('hidden', name !== tab.dataset.tab);
         });
     });
@@ -1671,6 +1958,12 @@ document.getElementById('addRuleBtn').addEventListener('click', async () => {
     const data = await apiPost('/api/rules', {pattern, category: cat, match_type: type});
     toast(`Rule added: ${pattern} → ${cat} (${data.updated || 0} transactions updated)`);
     document.getElementById('newRulePattern').value = '';
+    await App.refresh();
+});
+
+document.getElementById('normalizeRulesBtn').addEventListener('click', async () => {
+    const data = await apiPost('/api/rules/normalize', {});
+    toast(`Normalized ${data.normalized} rule pattern${data.normalized === 1 ? '' : 's'}`);
     await App.refresh();
 });
 
@@ -1790,6 +2083,21 @@ async function doImport(filename, btn) {
         }
     }
 }
+
+// --- Trips ---
+document.getElementById('createTripBtn').addEventListener('click', async () => {
+    const name = document.getElementById('newTripName').value.trim();
+    const start = document.getElementById('newTripStart').value;
+    const end = document.getElementById('newTripEnd').value;
+    const notes = document.getElementById('newTripNotes').value.trim();
+    if (!name || !start || !end) { toast('Name, start and end date required'); return; }
+    const excluded = [...document.querySelectorAll('#newTripExcludedCats input:checked')].map(el => el.value);
+    const r = await apiPost('/api/trips', {name, start_date: start, end_date: end, notes, auto_assign: true, excluded_categories: excluded});
+    toast(`Trip created, ${r.assigned} transactions assigned`);
+    document.getElementById('newTripName').value = '';
+    document.getElementById('newTripNotes').value = '';
+    await App.refresh();
+});
 
 // --- Init ---
 App.init();

@@ -9,6 +9,7 @@ from uuid import uuid4
 class TxnType(Enum):
     EXPENSE = "expense"
     INCOME = "income"
+    TRANSFER = "transfer"
 
 
 @dataclass
@@ -26,6 +27,7 @@ class Transaction:
     is_deleted: bool = False
     linked_to: str = ""
     adjustment: float = 0.0
+    deleted_at: str = ""
 
     def __post_init__(self):
         if not self.uuid:

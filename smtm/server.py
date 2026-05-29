@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 import tempfile
 import threading
 from collections import Counter, defaultdict
@@ -501,6 +502,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json_response({"pairs": self.db.get_reimburser_pairs()})
         elif path == "/api/reimburser-pairs/discover":
             self._json_response({"discovered": self.db.discover_reimburser_pairs()})
+        elif path == "/api/trips":
+            self._json_response({"trips": self.db.get_trips()})
+        elif re.match(r"^/api/trips/(\d+)$", path):
+            trip_id = int(re.match(r"^/api/trips/(\d+)$", path).group(1))
+            trip = self.db.get_trip(trip_id)
+            if not trip:
+                self._error(404, "Trip not found")
+            else:
+                txns = self.db.get_trip_transactions(trip_id)
+                self._json_response({"trip": trip, "transactions": txns})
         elif path == "/api/report/pdf":
             self._handle_pdf_download()
         else:
@@ -514,6 +525,9 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_import(preview=False)
         elif path == "/api/import/preview":
             self._handle_import(preview=True)
+        elif path == "/api/rules/normalize":
+            normalized = self.db.normalize_rules()
+            self._json_response({"ok": True, "normalized": normalized})
         elif path == "/api/rules":
             data = self._read_json_body()
             pattern = data.get("pattern", "")
@@ -647,6 +661,56 @@ class Handler(BaseHTTPRequestHandler):
                 self._json_response({"ok": True})
             else:
                 self._error(404, "Transaction not found or not linked")
+        elif path == "/api/trips":
+            data = self._read_json_body()
+            name = data.get("name", "").strip()
+            start_date = data.get("start_date", "")
+            end_date = data.get("end_date", "")
+            notes = data.get("notes", "")
+            excluded = data.get("excluded_categories", None)
+            if not name or not start_date or not end_date:
+                self._error(400, "name, start_date, end_date required")
+                return
+            trip_id = self.db.create_trip(name, start_date, end_date, notes, excluded)
+            if data.get("auto_assign"):
+                added = self.db.auto_assign_trip(trip_id)
+            else:
+                added = 0
+            self._json_response({"ok": True, "id": trip_id, "assigned": added})
+        elif re.match(r"^/api/trips/(\d+)/auto-assign$", path):
+            trip_id = int(re.match(r"^/api/trips/(\d+)/auto-assign$", path).group(1))
+            added = self.db.auto_assign_trip(trip_id)
+            self._json_response({"ok": True, "assigned": added})
+        elif re.match(r"^/api/trips/(\d+)/transactions$", path):
+            trip_id = int(re.match(r"^/api/trips/(\d+)/transactions$", path).group(1))
+            data = self._read_json_body()
+            txn_uuid = data.get("uuid", "")
+            if not txn_uuid:
+                self._error(400, "uuid required")
+                return
+            self.db.add_trip_transaction(trip_id, txn_uuid)
+            self._json_response({"ok": True})
+        elif re.match(r"^/api/trips/(\d+)/transactions/[^/]+/toggle-solo$", path):
+            m = re.match(r"^/api/trips/(\d+)/transactions/([^/]+)/toggle-solo$", path)
+            trip_id, txn_uuid = int(m.group(1)), m.group(2)
+            if self.db.toggle_trip_solo(trip_id, txn_uuid):
+                self._json_response({"ok": True})
+            else:
+                self._error(404, "Trip transaction not found")
+        elif re.match(r"^/api/trips/(\d+)$", path):
+            trip_id = int(re.match(r"^/api/trips/(\d+)$", path).group(1))
+            data = self._read_json_body()
+            name = data.get("name", "").strip()
+            start_date = data.get("start_date", "")
+            end_date = data.get("end_date", "")
+            notes = data.get("notes", "")
+            excluded = data.get("excluded_categories", None)
+            if self.db.update_trip(
+                trip_id, name, start_date, end_date, notes, excluded
+            ):
+                self._json_response({"ok": True})
+            else:
+                self._error(404, "Trip not found")
         else:
             self._error(404, "Not found")
 
@@ -664,6 +728,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._error(400, "category required")
                 return
             self.db.update_category(uuid, category)
+            self._json_response({"ok": True})
+        elif path.startswith("/api/transactions/") and "/type" in path:
+            uuid = self._extract_uuid(path, "/api/transactions/")
+            if uuid.endswith("/type"):
+                uuid = uuid[:-5]
+            data = self._read_json_body()
+            txn_type = data.get("type", "")
+            if txn_type not in ("expense", "income", "transfer"):
+                self._error(400, "type must be expense, income, or transfer")
+                return
+            self.db.update_txn_type(uuid, txn_type)
             self._json_response({"ok": True})
         else:
             self._error(404, "Not found")
@@ -687,6 +762,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json_response({"ok": True})
             else:
                 self._error(404, "Transaction not found")
+        elif re.match(r"^/api/trips/(\d+)/transactions/(.+)$", path):
+            m = re.match(r"^/api/trips/(\d+)/transactions/(.+)$", path)
+            trip_id, txn_uuid = int(m.group(1)), m.group(2)
+            self.db.remove_trip_transaction(trip_id, txn_uuid)
+            self._json_response({"ok": True})
+        elif re.match(r"^/api/trips/(\d+)$", path):
+            trip_id = int(re.match(r"^/api/trips/(\d+)$", path).group(1))
+            if self.db.delete_trip(trip_id):
+                self._json_response({"ok": True})
+            else:
+                self._error(404, "Trip not found")
         else:
             self._error(404, "Not found")
 
