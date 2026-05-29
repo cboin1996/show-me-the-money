@@ -6,7 +6,20 @@ from pathlib import Path
 from .adapters import detect_and_parse
 from .categorizer import categorize
 from .db import Database
-from .models import CategoryDB
+from .models import CategoryDB, Transaction
+
+
+def _matches_import_filter(txn: Transaction, filters: list[dict]) -> bool:
+    combined = f"{txn.store_raw} | {txn.sub_description}".lower()
+    for f in filters:
+        pat = f["pattern"].lower()
+        if f["match_type"] == "exact":
+            if txn.store_raw.lower() == pat:
+                return True
+        else:
+            if pat in combined:
+                return True
+    return False
 
 
 def import_file(
@@ -32,6 +45,9 @@ def import_file(
         }
 
     txns = detect_and_parse(csv_path)
+    filters = db.get_import_filters()
+    if filters:
+        txns = [t for t in txns if not _matches_import_filter(t, filters)]
     if not txns:
         return {
             "file": csv_path.name,

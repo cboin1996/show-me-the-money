@@ -502,6 +502,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json_response({"pairs": self.db.get_reimburser_pairs()})
         elif path == "/api/reimburser-pairs/discover":
             self._json_response({"discovered": self.db.discover_reimburser_pairs()})
+        elif path == "/api/import-filters":
+            self._json_response({"filters": self.db.get_import_filters()})
         elif path == "/api/trips":
             self._json_response({"trips": self.db.get_trips()})
         elif re.match(r"^/api/trips/(\d+)$", path):
@@ -525,6 +527,16 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_import(preview=False)
         elif path == "/api/import/preview":
             self._handle_import(preview=True)
+        elif path == "/api/import-filters":
+            data = self._read_json_body()
+            pattern = data.get("pattern", "").strip()
+            match_type = data.get("match_type", "substring")
+            label = data.get("label", "")
+            if not pattern:
+                self._error(400, "pattern required")
+                return
+            self.db.add_import_filter(pattern, match_type, label)
+            self._json_response({"ok": True})
         elif path == "/api/rules/normalize":
             normalized = self.db.normalize_rules()
             self._json_response({"ok": True, "normalized": normalized})
@@ -718,7 +730,18 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
-        if path.startswith("/api/transactions/") and "/category" in path:
+        if path.startswith("/api/transactions/") and path.endswith("/store"):
+            uuid = path[len("/api/transactions/") : -len("/store")]
+            data = self._read_json_body()
+            store_normalized = data.get("store_normalized", "").strip()
+            if not store_normalized:
+                self._error(400, "store_normalized required")
+                return
+            if self.db.update_store_normalized(uuid, store_normalized):
+                self._json_response({"ok": True})
+            else:
+                self._error(404, "Transaction not found")
+        elif path.startswith("/api/transactions/") and "/category" in path:
             uuid = self._extract_uuid(path, "/api/transactions/")
             if uuid.endswith("/category"):
                 uuid = uuid[:-9]
@@ -747,7 +770,13 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
-        if path.startswith("/api/reimbursers/"):
+        if path.startswith("/api/import-filters/"):
+            filter_id = int(path[len("/api/import-filters/") :])
+            if self.db.remove_import_filter(filter_id):
+                self._json_response({"ok": True})
+            else:
+                self._error(404, "Filter not found")
+        elif path.startswith("/api/reimbursers/"):
             pattern = path[len("/api/reimbursers/") :]
             from urllib.parse import unquote
 
