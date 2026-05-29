@@ -4,6 +4,7 @@ APP_NAME=smtm
 setup:
 	uv sync --extra dev
 	uv run playwright install chromium
+	git config core.hooksPath .githooks
 
 .PHONY: upgrade
 upgrade:
@@ -15,6 +16,13 @@ lint:
 	uv run black $(APP_NAME) tests
 	uv run isort $(APP_NAME) tests
 	npx prettier --write "**/*.md"
+
+.PHONY: version-check
+version-check:
+	@MAIN=$$(git show origin/master:pyproject.toml 2>/dev/null | grep '^version' | head -1 | cut -d'"' -f2) && \
+	CURRENT=$$(grep '^version' pyproject.toml | head -1 | cut -d'"' -f2) && \
+	if [ "$$MAIN" = "$$CURRENT" ]; then echo "ERROR: pyproject.toml version not bumped ($$CURRENT)"; exit 1; fi && \
+	echo "OK: $$MAIN -> $$CURRENT"
 
 .PHONY: lint-check
 lint-check:
