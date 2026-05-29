@@ -25,8 +25,8 @@ categorized expenses, budget tracking, and a fully interactive web dashboard.
   average.
 - **Budget tracking** — set monthly budgets per category, copy between months,
   budget vs actual visualization.
-- **Trips** — tag a date range as a trip, auto-assign expenses, split costs
-  with a partner (configurable %), mark individual transactions as "just me".
+- **Trips** — tag a date range as a trip, auto-assign expenses, split costs with
+  a partner (configurable %), mark individual transactions as "just me".
 - **Reimbursements** — link income transactions to the expenses they offset
   (e.g. Canada Life covering a wellness charge).
 - **Soft delete** — recycle bin with restore.
@@ -53,8 +53,8 @@ smtm import
 smtm serve
 ```
 
-Browser opens at `http://127.0.0.1:8000`. From there: categorize merchants,
-set budgets, review anomalies — no further CLI required.
+Browser opens at `http://127.0.0.1:8000`. From there: categorize merchants, set
+budgets, review anomalies — no further CLI required.
 
 ## Setup
 
@@ -74,16 +74,16 @@ smtm serve --reload            # auto-reload on source changes (dev mode)
 
 ### Tabs
 
-| Tab | What's here |
-|-----|-------------|
-| **Overview** | Monthly stacked bar, category donut, trend lines, income vs expenses, summary cards, anomalies |
+| Tab              | What's here                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Overview**     | Monthly stacked bar, category donut, trend lines, income vs expenses, summary cards, anomalies                       |
 | **Transactions** | Full transaction table — search, filter by category/date, bulk assign, bulk delete, inline category edit, export CSV |
-| **Organize** | Recategorize uncategorized merchants, category rules, store pairs (raw→normalized), recycle bin |
-| **Budgets** | Budget vs actual chart, set/edit monthly budgets, copy between months |
-| **Reimburse** | Known reimbursers, link income to the expense it covers, pending unlinked reimbursements |
-| **Trips** | Tag a date range as a trip, auto-assign expenses, configurable partner split %, per-transaction "just me" flag |
-| **Analytics** | Spend velocity, day-of-week chart, top merchants, month-over-month table, recurring charges, z-score outliers |
-| **Import** | Drag-and-drop CSV upload, preview before confirming, import history |
+| **Organize**     | Recategorize uncategorized merchants, category rules, store pairs (raw→normalized), recycle bin                      |
+| **Budgets**      | Budget vs actual chart, set/edit monthly budgets, copy between months                                                |
+| **Reimburse**    | Known reimbursers, link income to the expense it covers, pending unlinked reimbursements                             |
+| **Trips**        | Tag a date range as a trip, auto-assign expenses, configurable partner split %, per-transaction "just me" flag       |
+| **Analytics**    | Spend velocity, day-of-week chart, top merchants, month-over-month table, recurring charges, z-score outliers        |
+| **Import**       | Drag-and-drop CSV upload, preview before confirming, import history                                                  |
 
 ### Key workflows
 
@@ -103,8 +103,8 @@ Budgets tab → enter month (YYYY-MM), pick category, enter amount → Save.
 
 **Track a trip**
 
-Trips tab → enter name, start/end dates, check which categories to exclude
-from totals (Investments excluded by default) → Create & Auto-assign.
+Trips tab → enter name, start/end dates, check which categories to exclude from
+totals (Investments excluded by default) → Create & Auto-assign.
 
 In trip detail: set split % (e.g. 60% you / 40% partner). For transactions
 entirely yours (not shared), click **Just me** — they count 100% toward your
