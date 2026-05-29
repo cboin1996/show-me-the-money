@@ -86,6 +86,23 @@ CREATE TABLE IF NOT EXISTS import_log (
 
 CREATE INDEX IF NOT EXISTS idx_import_hash ON import_log(file_hash);
 
+CREATE TABLE IF NOT EXISTS trips (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS trip_transactions (
+    trip_id INTEGER NOT NULL,
+    txn_uuid TEXT NOT NULL,
+    PRIMARY KEY (trip_id, txn_uuid),
+    FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE,
+    FOREIGN KEY (txn_uuid) REFERENCES transactions(uuid) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
 );
@@ -882,6 +899,106 @@ class Database:
                 (income_uuid,),
             )
         return True
+
+    # -- Trips --
+
+    def get_trips(self) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT t.id, t.name, t.start_date, t.end_date, t.notes, "
+                "COUNT(tt.txn_uuid) AS txn_count, "
+                "COALESCE(SUM(CASE WHEN tr.txn_type='expense' THEN tr.amount ELSE 0 END), 0) AS total_spend "
+                "FROM trips t "
+                "LEFT JOIN trip_transactions tt ON tt.trip_id = t.id "
+                "LEFT JOIN transactions tr ON tr.uuid = tt.txn_uuid AND tr.is_deleted = 0 "
+                "GROUP BY t.id ORDER BY t.start_date DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_trip(self, trip_id: int) -> dict | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT t.id, t.name, t.start_date, t.end_date, t.notes "
+                "FROM trips t WHERE t.id = ?",
+                (trip_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_trip_transactions(self, trip_id: int) -> list[Transaction]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT tr.* FROM transactions tr "
+                "JOIN trip_transactions tt ON tt.txn_uuid = tr.uuid "
+                "WHERE tt.trip_id = ? AND tr.is_deleted = 0 ORDER BY tr.date",
+                (trip_id,),
+            ).fetchall()
+        return [self._row_to_txn(r) for r in rows]
+
+    def create_trip(
+        self, name: str, start_date: str, end_date: str, notes: str = ""
+    ) -> int:
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO trips (name, start_date, end_date, notes) VALUES (?, ?, ?, ?)",
+                (name, start_date, end_date, notes),
+            )
+        return cur.lastrowid
+
+    def delete_trip(self, trip_id: int) -> bool:
+        with self.conn:
+            cur = self.conn.execute("DELETE FROM trips WHERE id = ?", (trip_id,))
+        return cur.rowcount > 0
+
+    def auto_assign_trip(self, trip_id: int) -> int:
+        trip = self.get_trip(trip_id)
+        if not trip:
+            return 0
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT uuid FROM transactions WHERE date >= ? AND date <= ? AND is_deleted = 0",
+                (trip["start_date"], trip["end_date"]),
+            ).fetchall()
+        added = 0
+        with self.conn:
+            for row in rows:
+                try:
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO trip_transactions (trip_id, txn_uuid) VALUES (?, ?)",
+                        (trip_id, row["uuid"]),
+                    )
+                    added += 1
+                except Exception:
+                    pass
+        return added
+
+    def add_trip_transaction(self, trip_id: int, txn_uuid: str) -> bool:
+        try:
+            with self.conn:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO trip_transactions (trip_id, txn_uuid) VALUES (?, ?)",
+                    (trip_id, txn_uuid),
+                )
+            return True
+        except Exception:
+            return False
+
+    def remove_trip_transaction(self, trip_id: int, txn_uuid: str) -> bool:
+        with self.conn:
+            cur = self.conn.execute(
+                "DELETE FROM trip_transactions WHERE trip_id = ? AND txn_uuid = ?",
+                (trip_id, txn_uuid),
+            )
+        return cur.rowcount > 0
+
+    def update_trip(
+        self, trip_id: int, name: str, start_date: str, end_date: str, notes: str = ""
+    ) -> bool:
+        with self.conn:
+            cur = self.conn.execute(
+                "UPDATE trips SET name=?, start_date=?, end_date=?, notes=? WHERE id=?",
+                (name, start_date, end_date, notes, trip_id),
+            )
+        return cur.rowcount > 0
 
     # -- Helpers --
 

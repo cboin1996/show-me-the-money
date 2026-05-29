@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 import tempfile
 import threading
 from collections import Counter, defaultdict
@@ -501,6 +502,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json_response({"pairs": self.db.get_reimburser_pairs()})
         elif path == "/api/reimburser-pairs/discover":
             self._json_response({"discovered": self.db.discover_reimburser_pairs()})
+        elif path == "/api/trips":
+            self._json_response({"trips": self.db.get_trips()})
+        elif re.match(r"^/api/trips/(\d+)$", path):
+            trip_id = int(re.match(r"^/api/trips/(\d+)$", path).group(1))
+            trip = self.db.get_trip(trip_id)
+            if not trip:
+                self._error(404, "Trip not found")
+            else:
+                txns = self.db.get_trip_transactions(trip_id)
+                self._json_response({"trip": trip, "transactions": _txns_to_json(txns)})
         elif path == "/api/report/pdf":
             self._handle_pdf_download()
         else:
@@ -647,6 +658,45 @@ class Handler(BaseHTTPRequestHandler):
                 self._json_response({"ok": True})
             else:
                 self._error(404, "Transaction not found or not linked")
+        elif path == "/api/trips":
+            data = self._read_json_body()
+            name = data.get("name", "").strip()
+            start_date = data.get("start_date", "")
+            end_date = data.get("end_date", "")
+            notes = data.get("notes", "")
+            if not name or not start_date or not end_date:
+                self._error(400, "name, start_date, end_date required")
+                return
+            trip_id = self.db.create_trip(name, start_date, end_date, notes)
+            if data.get("auto_assign"):
+                added = self.db.auto_assign_trip(trip_id)
+            else:
+                added = 0
+            self._json_response({"ok": True, "id": trip_id, "assigned": added})
+        elif re.match(r"^/api/trips/(\d+)/auto-assign$", path):
+            trip_id = int(re.match(r"^/api/trips/(\d+)/auto-assign$", path).group(1))
+            added = self.db.auto_assign_trip(trip_id)
+            self._json_response({"ok": True, "assigned": added})
+        elif re.match(r"^/api/trips/(\d+)/transactions$", path):
+            trip_id = int(re.match(r"^/api/trips/(\d+)/transactions$", path).group(1))
+            data = self._read_json_body()
+            txn_uuid = data.get("uuid", "")
+            if not txn_uuid:
+                self._error(400, "uuid required")
+                return
+            self.db.add_trip_transaction(trip_id, txn_uuid)
+            self._json_response({"ok": True})
+        elif re.match(r"^/api/trips/(\d+)$", path):
+            trip_id = int(re.match(r"^/api/trips/(\d+)$", path).group(1))
+            data = self._read_json_body()
+            name = data.get("name", "").strip()
+            start_date = data.get("start_date", "")
+            end_date = data.get("end_date", "")
+            notes = data.get("notes", "")
+            if self.db.update_trip(trip_id, name, start_date, end_date, notes):
+                self._json_response({"ok": True})
+            else:
+                self._error(404, "Trip not found")
         else:
             self._error(404, "Not found")
 
@@ -687,6 +737,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json_response({"ok": True})
             else:
                 self._error(404, "Transaction not found")
+        elif re.match(r"^/api/trips/(\d+)/transactions/(.+)$", path):
+            m = re.match(r"^/api/trips/(\d+)/transactions/(.+)$", path)
+            trip_id, txn_uuid = int(m.group(1)), m.group(2)
+            self.db.remove_trip_transaction(trip_id, txn_uuid)
+            self._json_response({"ok": True})
+        elif re.match(r"^/api/trips/(\d+)$", path):
+            trip_id = int(re.match(r"^/api/trips/(\d+)$", path).group(1))
+            if self.db.delete_trip(trip_id):
+                self._json_response({"ok": True})
+            else:
+                self._error(404, "Trip not found")
         else:
             self._error(404, "Not found")
 

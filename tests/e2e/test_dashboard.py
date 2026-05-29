@@ -60,6 +60,7 @@ class TestPageLoad:
         expect(canvas).to_be_visible()
 
     def test_transaction_table_has_rows(self, dashboard: DashboardPage):
+        dashboard.click_tab("transactions")
         expect(dashboard.txn_rows.first).to_be_visible()
         expect(dashboard.page.locator("#txnCount")).to_contain_text("Showing")
 
@@ -84,8 +85,8 @@ class TestTabs:
         expect(dashboard.page.get_by_test_id("import-zone")).to_be_visible()
 
     def test_categorize_tab(self, dashboard: DashboardPage):
-        dashboard.click_tab("categorize")
-        expect(dashboard.page.locator("#tab-categorize")).to_be_visible()
+        dashboard.click_tab("organize")
+        expect(dashboard.page.locator("#tab-organize")).to_be_visible()
         expect(dashboard.page.get_by_test_id("recategorize-btn")).to_be_visible()
 
     def test_budgets_tab(self, dashboard: DashboardPage):
@@ -94,8 +95,8 @@ class TestTabs:
         expect(dashboard.page.locator("#budgetChart")).to_be_visible()
 
     def test_manage_tab(self, dashboard: DashboardPage):
-        dashboard.click_tab("manage")
-        expect(dashboard.page.locator("#tab-manage")).to_be_visible()
+        dashboard.click_tab("organize")
+        expect(dashboard.page.locator("#tab-organize")).to_be_visible()
         expect(dashboard.page.locator("#rulesSearch")).to_be_visible()
 
 
@@ -195,7 +196,7 @@ class TestDeleteRestore:
         expect(dashboard.txn_rows.first).to_be_visible()
         dashboard.delete_row(0)
         expect(dashboard.toast).to_contain_text("deleted")
-        dashboard.click_tab("manage")
+        dashboard.click_tab("organize")
         expect(dashboard.recycle_bin_rows.first).to_be_visible()
 
     def test_restore_from_recycle_bin(self, dashboard: DashboardPage):
@@ -203,7 +204,7 @@ class TestDeleteRestore:
         expect(dashboard.txn_rows.first).to_be_visible()
         dashboard.delete_row(0)
         expect(dashboard.toast).to_contain_text("deleted")
-        dashboard.click_tab("manage")
+        dashboard.click_tab("organize")
         expect(dashboard.recycle_bin_rows.first).to_be_visible()
         count_before = dashboard.recycle_bin_rows.count()
         dashboard.restore_first_deleted()
@@ -250,7 +251,7 @@ class TestCategorize:
         )
 
     def test_uncategorized_section_exists(self, dashboard: DashboardPage):
-        dashboard.click_tab("categorize")
+        dashboard.click_tab("organize")
         section = dashboard.page.locator("#uncategorizedSection")
         expect(section).to_be_visible()
 
@@ -288,14 +289,14 @@ class TestRules:
         expect(dashboard.toast).to_contain_text("Rule added")
 
     def test_search_rules_filters(self, dashboard: DashboardPage):
-        dashboard.click_tab("manage")
+        dashboard.click_tab("organize")
         count_el = dashboard.page.locator("#rulesCount")
         expect(count_el).to_have_text(re.compile(r"\(\d+/\d+\)"))
         dashboard.search_rules("starbucks")
         expect(count_el).to_have_text(re.compile(r"\(\d+/\d+\)"))
 
     def test_rules_count_shows_total(self, dashboard: DashboardPage):
-        dashboard.click_tab("manage")
+        dashboard.click_tab("organize")
         count_el = dashboard.page.locator("#rulesCount")
         expect(count_el).to_have_text(re.compile(r"\(\d+/\d+\)"))
 
