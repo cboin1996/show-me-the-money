@@ -623,7 +623,10 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
         <div><label>To</label><br><input type="date" id="dateTo" style="width:130px"></div>
         <div><label>Min $</label><br><input type="number" id="minAmount" style="width:80px" step="0.01"></div>
         <div><label>Max $</label><br><input type="number" id="maxAmount" style="width:80px" step="0.01"></div>
-        <div style="margin-left:auto;align-self:flex-end"><button class="btn btn-outline" id="exportCsvBtn" data-testid="export-csv-btn">Export CSV</button></div>
+        <div style="margin-left:auto;align-self:flex-end;display:flex;gap:8px">
+            <button class="btn btn-outline" id="needsAttentionBtn" title="Show unlabeled e-transfers that need a store name">Needs Attention</button>
+            <button class="btn btn-outline" id="exportCsvBtn" data-testid="export-csv-btn">Export CSV</button>
+        </div>
     </div>
     <div id="bulkBar" class="bulk-bar hidden" data-testid="bulk-bar">
         <span><span class="count" id="bulkCount">0</span> selected</span>
@@ -845,6 +848,17 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
         <div id="importResult" style="margin-top:16px"></div>
     </div>
     <div class="section">
+        <h2>Import Filters <span id="filtersCount" style="font-size:12px;color:#94a3b8"></span></h2>
+        <p class="subtitle">Transactions matching these patterns are skipped during import. Remove a filter to start importing that type.</p>
+        <div class="form-row">
+            <input type="text" id="newFilterPattern" placeholder="Pattern (e.g. interac e-transfer)">
+            <select id="newFilterType"><option value="substring">substring</option><option value="exact">exact</option></select>
+            <input type="text" id="newFilterLabel" placeholder="Label (optional)">
+            <button class="btn" id="addFilterBtn">Add Filter</button>
+        </div>
+        <div class="scroll-table" style="max-height:300px"><table><thead><tr><th>Pattern</th><th>Match</th><th>Label</th><th></th></tr></thead><tbody id="filtersBody"></tbody></table></div>
+    </div>
+    <div class="section">
         <h2>Import History</h2>
         <div class="scroll-table"><table><thead><tr><th>Date</th><th>File</th><th>Rows</th><th>New</th></tr></thead><tbody id="historyBody"></tbody></table></div>
     </div>
@@ -889,7 +903,7 @@ const App = {
     _txnTotal: 0,
 
     async init() {
-        const [txns, overview, budgets, rules, pairs, history, uncat, suggest, deleted, reimbursers, pendingReimb, reimburserPairs, stores, trips] = await Promise.all([
+        const [txns, overview, budgets, rules, pairs, history, uncat, suggest, deleted, reimbursers, pendingReimb, reimburserPairs, stores, trips, importFilters] = await Promise.all([
             api(`/api/transactions?offset=0&limit=${this._txnPageSize}`),
             api('/api/overview'),
             api('/api/budgets'),
@@ -899,6 +913,7 @@ const App = {
             api('/api/reimbursers'), api('/api/reimbursements/pending'),
             api('/api/reimburser-pairs'), api('/api/stores'),
             api('/api/trips'),
+            api('/api/import-filters'),
         ]);
         this.data.transactions = txns.transactions || [];
         this._txnTotal = txns.total || this.data.transactions.length;
@@ -919,6 +934,7 @@ const App = {
         this.data.expenseStores = stores.expenses || [];
         this.data.incomeStores = stores.income || [];
         this.data.trips = trips.trips || [];
+        this.data.importFilters = importFilters.filters || [];
         this.renderAll();
         this.populateDataLists();
     },
@@ -958,6 +974,7 @@ const App = {
         this.renderStorePairs();
         this.renderReimbursers();
         this.renderHistory();
+        this.renderImportFilters();
         this.renderRecycleBin();
         this.renderTrips();
         this.renderTripCreateExcludes();
@@ -1566,6 +1583,73 @@ const App = {
         ).join('');
     },
 
+    renderImportFilters() {
+        const filters = this.data.importFilters || [];
+        document.getElementById('filtersCount').textContent = `(${filters.length})`;
+        document.getElementById('filtersBody').innerHTML = filters.map(f =>
+            `<tr>
+                <td><code>${f.pattern}</code></td>
+                <td>${f.match_type}</td>
+                <td style="color:#94a3b8">${f.label || ''}</td>
+                <td><button class="btn btn-sm btn-danger" onclick="App.removeImportFilter(${f.id})">Remove</button></td>
+            </tr>`
+        ).join('') || '<tr><td colspan="4" style="color:#94a3b8;padding:12px">No filters — all transactions imported</td></tr>';
+    },
+
+    async addImportFilter() {
+        const pattern = document.getElementById('newFilterPattern').value.trim();
+        const match_type = document.getElementById('newFilterType').value;
+        const label = document.getElementById('newFilterLabel').value.trim();
+        if (!pattern) return;
+        await apiPost('/api/import-filters', {pattern, match_type, label});
+        document.getElementById('newFilterPattern').value = '';
+        document.getElementById('newFilterLabel').value = '';
+        const data = await api('/api/import-filters');
+        this.data.importFilters = data.filters || [];
+        this.renderImportFilters();
+        toast('Filter added');
+    },
+
+    async removeImportFilter(id) {
+        await api(`/api/import-filters/${id}`, {method:'DELETE'});
+        const data = await api('/api/import-filters');
+        this.data.importFilters = data.filters || [];
+        this.renderImportFilters();
+        toast('Filter removed');
+    },
+
+    startStoreEdit(uuid, cell, currentName) {
+        const input = document.createElement('input');
+        input.value = currentName;
+        input.style.cssText = 'width:100%;background:#0f172a;border:1px solid #3b82f6;color:#f8fafc;padding:2px 6px;border-radius:4px;font-size:13px';
+        cell.innerHTML = '';
+        cell.appendChild(input);
+        input.focus();
+        input.select();
+        const save = async () => {
+            const newName = input.value.trim();
+            if (!newName || newName === currentName) { cell.textContent = currentName; return; }
+            const r = await api(`/api/transactions/${uuid}/store`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({store_normalized: newName})});
+            if (r.ok) {
+                const txn = this.data.transactions.find(t => t.uuid === uuid);
+                if (txn) txn.store_normalized = newName;
+                toast(`Store renamed to "${newName}"`);
+            }
+            cell.textContent = newName;
+        };
+        input.addEventListener('blur', save);
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { cell.textContent = currentName; input.removeEventListener('blur', save); } });
+    },
+
+    _needsAttentionActive: false,
+    toggleNeedsAttention() {
+        this._needsAttentionActive = !this._needsAttentionActive;
+        const btn = document.getElementById('needsAttentionBtn');
+        btn.style.color = this._needsAttentionActive ? '#f59e0b' : '';
+        btn.style.borderColor = this._needsAttentionActive ? '#f59e0b' : '';
+        this.renderTable();
+    },
+
     renderRecycleBin() {
         const body = document.getElementById('recycleBody');
         body.innerHTML = this.data.deleted.map(t => {
@@ -1759,7 +1843,14 @@ const App = {
         const dateFrom = document.getElementById('dateFrom').value;
         const dateTo = document.getElementById('dateTo').value;
 
+        const filterPatterns = (this.data.importFilters || []).map(f => ({pat: f.pattern.toLowerCase(), type: f.match_type}));
         let filtered = this.data.transactions.filter(t => {
+            if (this._needsAttentionActive) {
+                const raw = t.store_raw.toLowerCase();
+                const matchesFilter = filterPatterns.some(f => f.type === 'exact' ? raw === f.pat : raw.includes(f.pat));
+                if (!matchesFilter) return false;
+                if (t.store_normalized && t.store_normalized !== t.store_raw) return false;
+            }
             if (search && !t.store_raw.toLowerCase().includes(search) && !t.store_normalized.toLowerCase().includes(search) && !t.category.toLowerCase().includes(search)) return false;
             if (cat && t.category !== cat) return false;
             if (month && t.month !== month) return false;
@@ -1813,7 +1904,7 @@ const App = {
             return `<tr${rowBg}>
                 <td><input type="checkbox" data-uuid="${t.uuid}" ${checked} onchange="App.toggleSelect('${t.uuid}', this.checked)"></td>
                 <td>${t.date}</td>
-                <td title="${t.store_raw}">${t.store_normalized}</td>
+                <td title="${t.store_raw}" class="store-cell" onclick="App.startStoreEdit('${t.uuid}', this, '${(t.store_normalized||t.store_raw).replace(/'/g,"\\'")}')" style="cursor:pointer" data-uuid="${t.uuid}">${t.store_normalized}</td>
                 <td>${catBadge(t.category)} <select class="inline-cat-select" onchange="App.inlineCategory('${t.uuid}', '${(t.store_normalized||t.store_raw).replace(/'/g,"\\'")}', this.value)"><option value="">edit</option>${catOpts}</select></td>
                 <td style="text-align:right;font-variant-numeric:tabular-nums">${t.type==='income'?'+':'-'}${amtDisplay}</td>
                 <td>${t.type}</td>
@@ -2032,6 +2123,12 @@ document.getElementById('bulkClearBtn').addEventListener('click', () => { App._s
 
 // --- CSV export ---
 document.getElementById('exportCsvBtn').addEventListener('click', () => App.exportCsv());
+
+// --- Needs Attention ---
+document.getElementById('needsAttentionBtn').addEventListener('click', () => App.toggleNeedsAttention());
+
+// --- Import filters ---
+document.getElementById('addFilterBtn').addEventListener('click', () => App.addImportFilter());
 
 // --- Rules/pairs search ---
 document.getElementById('rulesSearch').addEventListener('input', () => App.renderRules());

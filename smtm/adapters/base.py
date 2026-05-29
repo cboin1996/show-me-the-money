@@ -31,7 +31,6 @@ def is_transfer_withdrawal(description: str, sub: str) -> bool:
     vs a real transaction (keep)."""
     sub_lower = sub.lower()
     transfer_subs = [
-        "interac e-transfer",
         "mb-transfer",
         "mb-credit card",
         "pc to",

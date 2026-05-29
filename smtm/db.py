@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .models import CategoryDB, Transaction, TxnType
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _MIGRATIONS = [
     # 1: linked reimbursements
@@ -22,6 +22,13 @@ _MIGRATIONS = [
     "ALTER TABLE trip_transactions ADD COLUMN is_solo INTEGER DEFAULT 0",
     # 5: soft-delete timestamp
     "ALTER TABLE transactions ADD COLUMN deleted_at TEXT DEFAULT ''",
+    # 6: configurable import filters
+    """CREATE TABLE IF NOT EXISTS import_filters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pattern TEXT UNIQUE NOT NULL,
+        match_type TEXT NOT NULL DEFAULT 'substring',
+        label TEXT NOT NULL DEFAULT ''
+    )""",
 ]
 
 SCHEMA_SQL = """
@@ -100,6 +107,13 @@ CREATE TABLE IF NOT EXISTS import_log (
 
 CREATE INDEX IF NOT EXISTS idx_import_hash ON import_log(file_hash);
 
+CREATE TABLE IF NOT EXISTS import_filters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern TEXT UNIQUE NOT NULL,
+    match_type TEXT NOT NULL DEFAULT 'substring',
+    label TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS trips (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -162,6 +176,7 @@ class Database:
                     (SCHEMA_VERSION,),
                 )
             self._migrate()
+        self._seed_import_filters()
 
     def _migrate(self):
         row = self.conn.execute("SELECT version FROM schema_version").fetchone()
@@ -175,6 +190,58 @@ class Database:
                         pass  # column already exists — idempotent
                     self.conn.execute("UPDATE schema_version SET version = ?", (i,))
                     ver = i
+
+    # -- Import filters --
+
+    _DEFAULT_IMPORT_FILTERS = [
+        ("mb-credit card/loc pay", "substring", "Credit card payment"),
+        ("mb-transfer", "substring", "Inter-account transfer"),
+        ("pc to", "substring", "Inter-account transfer"),
+        ("pc from", "substring", "Inter-account transfer"),
+        ("mb-cash advance", "substring", "Cash advance"),
+        ("mb - cash advance", "substring", "Cash advance"),
+        ("pc - payment", "substring", "Payment"),
+        ("customer transfer dr.", "substring", "Customer transfer"),
+        ("customer transfer cr.", "substring", "Customer transfer"),
+        ("crd. card bill payment", "substring", "Credit card payment"),
+        ("interac e-transfer", "substring", "E-transfer"),
+        ("free interac e-transfer", "substring", "E-transfer"),
+    ]
+
+    def _seed_import_filters(self):
+        count = self.conn.execute("SELECT COUNT(*) FROM import_filters").fetchone()[0]
+        if count == 0:
+            with self.conn:
+                for pattern, match_type, label in self._DEFAULT_IMPORT_FILTERS:
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO import_filters (pattern, match_type, label) "
+                        "VALUES (?, ?, ?)",
+                        (pattern, match_type, label),
+                    )
+
+    def get_import_filters(self) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT id, pattern, match_type, label FROM import_filters ORDER BY id"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_import_filter(
+        self, pattern: str, match_type: str = "substring", label: str = ""
+    ) -> int:
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO import_filters (pattern, match_type, label) VALUES (?, ?, ?)",
+                (pattern, match_type, label),
+            )
+        return cur.lastrowid
+
+    def remove_import_filter(self, filter_id: int) -> bool:
+        with self.conn:
+            cur = self.conn.execute(
+                "DELETE FROM import_filters WHERE id = ?", (filter_id,)
+            )
+        return cur.rowcount > 0
 
     # -- Import log --
 
@@ -299,6 +366,14 @@ class Database:
                 "UPDATE transactions SET txn_type = ? WHERE uuid = ?",
                 (txn_type, uuid),
             )
+
+    def update_store_normalized(self, uuid: str, store_normalized: str) -> bool:
+        with self.conn:
+            cur = self.conn.execute(
+                "UPDATE transactions SET store_normalized = ? WHERE uuid = ?",
+                (store_normalized, uuid),
+            )
+        return cur.rowcount > 0
 
     def recategorize_all(self, category_db: CategoryDB):
         """Re-run categorization on all uncategorized transactions."""

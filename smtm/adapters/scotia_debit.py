@@ -35,10 +35,7 @@ class ScotiaDebitNewAdapter(BaseAdapter):
         return "Balance" in peek_df.columns
 
     def ignorable_patterns(self) -> list[str]:
-        return COMMON_IGNORABLE + [
-            "free interac e-transfer",
-            "interac e-transfer",
-        ]
+        return COMMON_IGNORABLE
 
     def parse(self, path: str | Path) -> list[Transaction]:
         path = Path(path)
@@ -90,10 +87,7 @@ class ScotiaDebitOldAdapter(BaseAdapter):
             return False
 
     def ignorable_patterns(self) -> list[str]:
-        return COMMON_IGNORABLE + [
-            "free interac e-transfer",
-            "interac e-transfer",
-        ]
+        return COMMON_IGNORABLE
 
     def parse(self, path: str | Path) -> list[Transaction]:
         path = Path(path)
