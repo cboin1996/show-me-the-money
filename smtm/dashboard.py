@@ -623,10 +623,7 @@ input[type="checkbox"] { accent-color: #3b82f6; width: 14px; height: 14px; curso
         <div><label>To</label><br><input type="date" id="dateTo" style="width:130px"></div>
         <div><label>Min $</label><br><input type="number" id="minAmount" style="width:80px" step="0.01"></div>
         <div><label>Max $</label><br><input type="number" id="maxAmount" style="width:80px" step="0.01"></div>
-        <div style="margin-left:auto;align-self:flex-end;display:flex;gap:8px">
-            <button class="btn btn-outline" id="needsAttentionBtn" title="Show unlabeled e-transfers that need a store name">Needs Attention</button>
-            <button class="btn btn-outline" id="exportCsvBtn" data-testid="export-csv-btn">Export CSV</button>
-        </div>
+        <div style="margin-left:auto;align-self:flex-end"><button class="btn btn-outline" id="exportCsvBtn" data-testid="export-csv-btn">Export CSV</button></div>
     </div>
     <div id="bulkBar" class="bulk-bar hidden" data-testid="bulk-bar">
         <span><span class="count" id="bulkCount">0</span> selected</span>
@@ -1641,15 +1638,6 @@ const App = {
         input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { cell.textContent = currentName; input.removeEventListener('blur', save); } });
     },
 
-    _needsAttentionActive: false,
-    toggleNeedsAttention() {
-        this._needsAttentionActive = !this._needsAttentionActive;
-        const btn = document.getElementById('needsAttentionBtn');
-        btn.style.color = this._needsAttentionActive ? '#f59e0b' : '';
-        btn.style.borderColor = this._needsAttentionActive ? '#f59e0b' : '';
-        this.renderTable();
-    },
-
     renderRecycleBin() {
         const body = document.getElementById('recycleBody');
         body.innerHTML = this.data.deleted.map(t => {
@@ -1843,14 +1831,7 @@ const App = {
         const dateFrom = document.getElementById('dateFrom').value;
         const dateTo = document.getElementById('dateTo').value;
 
-        const filterPatterns = (this.data.importFilters || []).map(f => ({pat: f.pattern.toLowerCase(), type: f.match_type}));
         let filtered = this.data.transactions.filter(t => {
-            if (this._needsAttentionActive) {
-                const raw = t.store_raw.toLowerCase();
-                const matchesFilter = filterPatterns.some(f => f.type === 'exact' ? raw === f.pat : raw.includes(f.pat));
-                if (!matchesFilter) return false;
-                if (t.store_normalized && t.store_normalized !== t.store_raw) return false;
-            }
             if (search && !t.store_raw.toLowerCase().includes(search) && !t.store_normalized.toLowerCase().includes(search) && !t.category.toLowerCase().includes(search)) return false;
             if (cat && t.category !== cat) return false;
             if (month && t.month !== month) return false;
@@ -2123,9 +2104,6 @@ document.getElementById('bulkClearBtn').addEventListener('click', () => { App._s
 
 // --- CSV export ---
 document.getElementById('exportCsvBtn').addEventListener('click', () => App.exportCsv());
-
-// --- Needs Attention ---
-document.getElementById('needsAttentionBtn').addEventListener('click', () => App.toggleNeedsAttention());
 
 // --- Import filters ---
 document.getElementById('addFilterBtn').addEventListener('click', () => App.addImportFilter());
